@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Tennis" />
+<meta name="theme-color" content="#1d9e75" />
+<link rel="apple-touch-icon" href="icon-180.png" />
+<link rel="manifest" href="manifest.json" />
+<title>Tennis Tracker</title>
+<style>
+  :root { --green:#1d9e75; --amber:#ba7517; --red:#a32d2d; --border:#e0ddd3; --muted:#666; --surface1:#f7f6f3; --surface2:#efeee9; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:#1a1a1a; background:#fff; padding-bottom:40px; }
+  #app { max-width:720px; margin:0 auto; padding: env(safe-area-inset-top,20px) 16px 20px; }
+  h1 { font-size:20px; font-weight:600; margin:8px 0 16px; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; position:sticky; top:0; background:#fff; padding:8px 0; z-index:5; }
+  .tab { flex:1; text-align:center; padding:10px; border-radius:10px; border:0.5px solid var(--border); background:var(--surface1); font-size:14px; cursor:pointer; }
+  .tab.active { background:var(--green); color:#fff; border-color:var(--green); font-weight:600; }
+  .card { background:var(--surface1); border-radius:12px; padding:1rem 1.1rem; margin-bottom:12px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .btn { border:0.5px solid #ccc; background:#fff; border-radius:8px; padding:9px 14px; cursor:pointer; font-size:14px; color:inherit; }
+  .btn:active { transform:scale(0.98); }
+  .btn-primary { background:var(--green); color:#fff; border:none; font-weight:600; }
+  .btn-danger { color:var(--red); border-color:#f0a0a0; }
+  input, select { height:38px; border-radius:8px; border:0.5px solid #ccc; padding:0 10px; font-size:15px; background:#fff; color:inherit; width:100%; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .field label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; }
+  .name { font-weight:600; font-size:16px; }
+  .sub { font-size:13px; color:var(--muted); }
+  .bar-bg { background:#e4e2da; border-radius:6px; height:6px; overflow:hidden; margin-top:8px; }
+  .bar-fill { height:100%; border-radius:6px; }
+  .log-entry { display:flex; justify-content:space-between; font-size:13px; padding:7px 0; border-top:0.5px solid var(--border); gap:8px; }
+  .empty { text-align:center; color:var(--muted); padding:2rem 0; font-size:14px; }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:20; padding:16px; }
+  .modal { background:#fff; border-radius:14px; padding:1.5rem; width:100%; max-width:340px; display:flex; flex-direction:column; gap:4px; max-height:85vh; overflow:auto; }
+  .modal-title { font-weight:600; font-size:17px; margin-bottom:6px; }
+  .metric-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+  .metric { background:var(--surface1); border-radius:10px; padding:12px 14px; }
+  .metric .label { font-size:12px; color:var(--muted); text-transform:uppercase; }
+  .metric .value { font-size:22px; font-weight:600; margin-top:2px; }
+  .type-pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:var(--surface2); color:#444; }
+  .fab-add { width:100%; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="app"><p class="empty">Loading…</p></div>
+<script>
+(function(){
+  const COACH_KEY = 'mav_coaches_v1';
+  const COURT_KEY = 'mav_courttime_v1';
+  const ACADEMIC_KEY = 'mav_academic_v1';
+  let coaches = [];
+  let courtLog = [];
+  let academic = [];
+  let tab = 'coaches';
+  let sortMode = localStorage.getItem('mav_sort_v1') || 'name';
+  let logExpanded = {};
+  let modal = null;
+
+  function load() {
+    try { coaches = JSON.parse(localStorage.getItem(COACH_KEY) || '[]'); } catch(e){ coaches = []; }
+    try { courtLog = JSON.parse(localStorage.getItem(COURT_KEY) || '[]'); } catch(e){ courtLog = []; }
+    try { academic = JSON.parse(localStorage.getItem(ACADEMIC_KEY) || '[]'); } catch(e){ academic = []; }
+  }
+  function saveCoaches() { localStorage.setItem(COACH_KEY, JSON.stringify(coaches)); }
+  function saveCourt() { localStorage.setItem(COURT_KEY, JSON.stringify(courtLog)); }
+  function saveAcademic() { localStorage.setItem(ACADEMIC_KEY, JSON.stringify(academic)); }
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' · ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  }
+  function startOfWeek() {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(d.setDate(diff));
+    monday.setHours(0,0,0,0);
+    return monday;
+  }
+
+  // ---------- Coaches ----------
+  function addCoach(name, type, total) {
+    coaches.push({ id:'c'+Date.now(), name, type, totalSessions: total, log: [] });
+    saveCoaches(); render();
+  }
+  function deleteCoach(id) { coaches = coaches.filter(c=>c.id!==id); saveCoaches(); render(); }
+  function logSession(id, isoTs) {
+    const c = coaches.find(c=>c.id===id); if (!c) return;
+    c.log.unshift({ id:'l'+Date.now(), ts: isoTs || new Date().toISOString() });
+    c.log.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveCoaches(); render();
+  }
+  function deleteCoachEntry(coachId, entryId) {
+    const c = coaches.find(c=>c.id===coachId); if (!c) return;
+    c.log = c.log.filter(e=>e.id!==entryId);
+    saveCoaches(); render();
+  }
+  function undoLastCoach(id) {
+    const c = coaches.find(c=>c.id===id); if (!c || !c.log.length) return;
+    c.log.shift(); saveCoaches(); render();
+  }
+
+  // ---------- Court time ----------
+  const COURT_TYPES = ['Group hit','Individual practice','Match play','Fitness / gym'];
+  function addCourtEntry(type, minutes, dateStr, timeStr, notes) {
+    const iso = dateStr ? new Date(dateStr + 'T' + (timeStr||'12:00') + ':00').toISOString() : new Date().toISOString();
+    courtLog.unshift({ id:'ct'+Date.now(), type, minutes, ts: iso, notes: notes||'' });
+    courtLog.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveCourt(); render();
+  }
+  function deleteCourtEntry(id) { courtLog = courtLog.filter(e=>e.id!==id); saveCourt(); render(); }
+
+  function courtStats() {
+    const weekStart = startOfWeek();
+    let weekMin = 0, totalMin = 0;
+    const byType = {};
+    courtLog.forEach(e => {
+      totalMin += e.minutes;
+      if (new Date(e.ts) >= weekStart) weekMin += e.minutes;
+      byType[e.type] = (byType[e.type]||0) + e.minutes;
+    });
+    return { weekMin, totalMin, byType };
+  }
+  function hrs(min) { return (min/60).toFixed(1); }
+
+  // ---------- Academic tutoring ----------
+  function addAcademicSubject(subject, tutor, totalHours) {
+    academic.push({ id:'a'+Date.now(), subject, tutor, totalMinutes: Math.round(totalHours*60), log: [] });
+    saveAcademic(); render();
+  }
+  function deleteAcademicSubject(id) { academic = academic.filter(a=>a.id!==id); saveAcademic(); render(); }
+  function logAcademicTime(id, isoTs, minutes, notes) {
+    const a = academic.find(a=>a.id===id); if (!a) return;
+    a.log.unshift({ id:'al'+Date.now(), ts: isoTs, minutes, notes: notes||'' });
+    a.log.sort((x,y)=> new Date(y.ts) - new Date(x.ts));
+    saveAcademic(); render();
+  }
+  function deleteAcademicEntry(subjectId, entryId) {
+    const a = academic.find(a=>a.id===subjectId); if (!a) return;
+    a.log = a.log.filter(e=>e.id!==entryId);
+    saveAcademic(); render();
+  }
+  function undoLastAcademic(id) {
+    const a = academic.find(a=>a.id===id); if (!a || !a.log.length) return;
+    a.log.shift(); saveAcademic(); render();
+  }
+
+  // ---------- Render ----------
+  function render() {
+    const app = document.getElementById('app');
+    let html = '<h1>Maverick — activity tracker</h1>';
+    html += '<div class="tabs">';
+    html += '<div class="tab ' + (tab==='coaches'?'active':'') + '" data-tab="coaches">Coach sessions</div>';
+    html += '<div class="tab ' + (tab==='court'?'active':'') + '" data-tab="court">Court time</div>';
+    html += '<div class="tab ' + (tab==='academic'?'active':'') + '" data-tab="academic">Academic</div>';
+    html += '</div>';
+
+    if (tab === 'coaches') html += renderCoaches();
+    else if (tab === 'court') html += renderCourt();
+    else html += renderAcademic();
+
+    app.innerHTML = html;
+
+    app.querySelectorAll('.tab').forEach(t => t.onclick = () => { tab = t.dataset.tab; render(); });
+
+    if (tab === 'coaches') bindCoachEvents(app);
+    else if (tab === 'court') bindCourtEvents(app);
+    else bindAcademicEvents(app);
+
+    renderModal();
+  }
+
+  function renderCoaches() {
+    let html = '<div class="row" style="margin-bottom:10px; gap:8px;">';
+    html += '<button class="btn btn-primary" id="add-coach-btn" style="flex:1;">+ Add coach</button>';
+    html += '<select id="sort-select" style="width:auto; flex:1;">';
+    html += '<option value="name"'+(sortMode==='name'?' selected':'')+'>Sort: name (A–Z)</option>';
+    html += '<option value="role"'+(sortMode==='role'?' selected':'')+'>Sort: role (A–Z)</option>';
+    html += '</select>';
+    html += '</div>';
+
+    if (coaches.length === 0) { html += '<div class="empty">No coaches yet. Add one to start logging prepaid sessions.</div>'; return html; }
+
+    const sorted = coaches.slice().sort((a,b) => {
+      if (sortMode === 'role') {
+        const r = a.type.localeCompare(b.type);
+        return r !== 0 ? r : a.name.localeCompare(b.name);
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    sorted.forEach(c => {
+      const used = c.log.length, total = c.totalSessions||0, remaining = total-used;
+      const pct = total>0 ? Math.min(100, Math.round((used/total)*100)) : 0;
+      const low = total>0 && remaining<=2 && remaining>=0;
+      const over = remaining<0;
+      const barColor = over ? 'var(--red)' : low ? 'var(--amber)' : 'var(--green)';
+      html += '<div class="card">';
+      html += '<div class="row"><div><div class="name">'+esc(c.name)+'</div><div class="sub">'+esc(c.type)+'</div></div>';
+      html += '<div style="display:flex; gap:8px;">';
+      html += '<button class="btn" data-action="log" data-id="'+c.id+'">+ Log session</button>';
+      html += '<button class="btn" data-action="delcoach" data-id="'+c.id+'" aria-label="Delete">✕</button>';
+      html += '</div></div>';
+      if (total>0) {
+        html += '<div class="row" style="margin-top:10px;">';
+        html += '<span class="sub">'+used+' of '+total+' used'+(over?' (over by '+Math.abs(remaining)+')':'')+'</span>';
+        html += '<span class="sub" style="font-weight:600; color:'+barColor+';">'+(over?0:remaining)+' left</span></div>';
+        html += '<div class="bar-bg"><div class="bar-fill" style="width:'+pct+'%; background:'+barColor+';"></div></div>';
+      } else {
+        html += '<div class="sub" style="margin-top:10px;">'+used+' sessions logged (no package total set)</div>';
+      }
+      if (c.log.length>0) {
+        html += '<div style="margin-top:10px;">';
+        html += '<button class="btn" style="font-size:12px; padding:5px 10px;" data-action="toggle" data-id="'+c.id+'">'+(logExpanded[c.id]?'Hide log':'Show log ('+c.log.length+')')+'</button> ';
+        html += '<button class="btn btn-danger" style="font-size:12px; padding:5px 10px;" data-action="undocoach" data-id="'+c.id+'">Undo last</button></div>';
+        if (logExpanded[c.id]) {
+          html += '<div style="margin-top:6px;">';
+          c.log.forEach(e => html += '<div class="log-entry"><span>'+fmtDate(e.ts)+'</span><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delentry" data-coach="'+c.id+'" data-entry="'+e.id+'">✕</button></div>');
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+    });
+    return html;
+  }
+
+  function bindCoachEvents(app) {
+    const addBtn = document.getElementById('add-coach-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'addCoach'}; render(); };
+    const sortSelect = document.getElementById('sort-select');
+    if (sortSelect) sortSelect.onchange = () => { sortMode = sortSelect.value; localStorage.setItem('mav_sort_v1', sortMode); render(); };
+    app.querySelectorAll('[data-action="log"]').forEach(b=>b.onclick=()=>{ modal = {type:'logCoach', coachId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="delcoach"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove this coach and all logged sessions?')) deleteCoach(b.dataset.id); });
+    app.querySelectorAll('[data-action="toggle"]').forEach(b=>b.onclick=()=>{ logExpanded[b.dataset.id]=!logExpanded[b.dataset.id]; render(); });
+    app.querySelectorAll('[data-action="undocoach"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove most recent session?')) undoLastCoach(b.dataset.id); });
+    app.querySelectorAll('[data-action="delentry"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this logged session?')) deleteCoachEntry(b.dataset.coach, b.dataset.entry); });
+  }
+
+  function renderCourt() {
+    const stats = courtStats();
+    let html = '<div class="metric-grid">';
+    html += '<div class="metric"><div class="label">This week</div><div class="value">'+hrs(stats.weekMin)+' hrs</div></div>';
+    html += '<div class="metric"><div class="label">All time</div><div class="value">'+hrs(stats.totalMin)+' hrs</div></div>';
+    html += '</div>';
+
+    html += '<div class="card" style="display:flex; gap:6px; flex-wrap:wrap;">';
+    COURT_TYPES.forEach(t => {
+      const m = stats.byType[t] || 0;
+      html += '<span class="type-pill">'+esc(t)+': '+hrs(m)+'h</span>';
+    });
+    html += '</div>';
+
+    html += '<button class="btn btn-primary fab-add" id="add-court-btn">+ Log court time</button>';
+
+    if (courtLog.length === 0) {
+      html += '<div class="empty">No court time logged yet.</div>';
+    } else {
+      html += '<div class="card">';
+      courtLog.forEach(e => {
+        html += '<div class="log-entry"><span><span class="type-pill">'+esc(e.type)+'</span> '+fmtDate(e.ts)+' · '+hrs(e.minutes)+'h'+(e.notes?' · '+esc(e.notes):'')+'</span>';
+        html += '<button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delcourt" data-id="'+e.id+'">✕</button></div>';
+      });
+      html += '</div>';
+    }
+    return html;
+  }
+
+  function bindCourtEvents(app) {
+    const addBtn = document.getElementById('add-court-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'addCourt'}; render(); };
+    app.querySelectorAll('[data-action="delcourt"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this entry?')) deleteCourtEntry(b.dataset.id); });
+  }
+
+  function renderAcademic() {
+    let html = '<button class="btn btn-primary fab-add" id="add-academic-btn">+ Add class</button>';
+    if (academic.length === 0) { html += '<div class="empty">No academic classes yet. Add one to start tracking prepaid hours.</div>'; return html; }
+
+    academic.forEach(a => {
+      const usedMin = a.log.reduce((s,e)=>s+e.minutes, 0);
+      const totalMin = a.totalMinutes || 0;
+      const remainingMin = totalMin - usedMin;
+      const pct = totalMin>0 ? Math.min(100, Math.round((usedMin/totalMin)*100)) : 0;
+      const low = totalMin>0 && remainingMin<=60 && remainingMin>=0;
+      const over = remainingMin<0;
+      const barColor = over ? 'var(--red)' : low ? 'var(--amber)' : 'var(--green)';
+
+      html += '<div class="card">';
+      html += '<div class="row"><div><div class="name">'+esc(a.subject)+'</div><div class="sub">'+esc(a.tutor||'')+'</div></div>';
+      html += '<div style="display:flex; gap:8px;">';
+      html += '<button class="btn" data-action="logac" data-id="'+a.id+'">+ Log time</button>';
+      html += '<button class="btn" data-action="delac" data-id="'+a.id+'" aria-label="Delete">✕</button>';
+      html += '</div></div>';
+
+      if (totalMin>0) {
+        html += '<div class="row" style="margin-top:10px;">';
+        html += '<span class="sub">'+hrs(usedMin)+' of '+hrs(totalMin)+' hrs used'+(over?' (over by '+hrs(Math.abs(remainingMin))+'h)':'')+'</span>';
+        html += '<span class="sub" style="font-weight:600; color:'+barColor+';">'+(over?'0.0':hrs(remainingMin))+' hrs left</span></div>';
+        html += '<div class="bar-bg"><div class="bar-fill" style="width:'+pct+'%; background:'+barColor+';"></div></div>';
+      } else {
+        html += '<div class="sub" style="margin-top:10px;">'+hrs(usedMin)+' hrs logged (no package total set)</div>';
+      }
+
+      if (a.log.length>0) {
+        html += '<div style="margin-top:10px;">';
+        html += '<button class="btn" style="font-size:12px; padding:5px 10px;" data-action="toggleac" data-id="'+a.id+'">'+(logExpanded['ac_'+a.id]?'Hide log':'Show log ('+a.log.length+')')+'</button> ';
+        html += '<button class="btn btn-danger" style="font-size:12px; padding:5px 10px;" data-action="undoac" data-id="'+a.id+'">Undo last</button></div>';
+        if (logExpanded['ac_'+a.id]) {
+          html += '<div style="margin-top:6px;">';
+          a.log.forEach(e => html += '<div class="log-entry"><span>'+fmtDate(e.ts)+' · '+hrs(e.minutes)+'h'+(e.notes?' · '+esc(e.notes):'')+'</span><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delacentry" data-subject="'+a.id+'" data-entry="'+e.id+'">✕</button></div>');
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+    });
+    return html;
+  }
+
+  function bindAcademicEvents(app) {
+    const addBtn = document.getElementById('add-academic-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'addAcademic'}; render(); };
+    app.querySelectorAll('[data-action="logac"]').forEach(b=>b.onclick=()=>{ modal = {type:'logAcademic', subjectId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="delac"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove this class and all logged time?')) deleteAcademicSubject(b.dataset.id); });
+    app.querySelectorAll('[data-action="toggleac"]').forEach(b=>b.onclick=()=>{ const k='ac_'+b.dataset.id; logExpanded[k]=!logExpanded[k]; render(); });
+    app.querySelectorAll('[data-action="undoac"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove most recent entry?')) undoLastAcademic(b.dataset.id); });
+    app.querySelectorAll('[data-action="delacentry"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this logged time?')) deleteAcademicEntry(b.dataset.subject, b.dataset.entry); });
+  }
+
+  function renderModal() {
+    const old = document.getElementById('modal-root');
+    if (old) old.remove();
+    if (!modal) return;
+    const div = document.createElement('div');
+    div.id = 'modal-root';
+
+    if (modal.type === 'logCoach') {
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0,10);
+      const timeStr = now.toTimeString().slice(0,5);
+      const coach = coaches.find(c=>c.id===modal.coachId);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Log session — '+esc(coach ? coach.name : '')+'</div>' +
+        '<div class="field"><label>Date</label><input id="m-lsdate" type="date" value="'+todayStr+'" /></div>' +
+        '<div class="field"><label>Time</label><input id="m-lstime" type="time" value="'+timeStr+'" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Log</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const date = document.getElementById('m-lsdate').value;
+        const time = document.getElementById('m-lstime').value || '00:00';
+        if (!date) { document.getElementById('m-lsdate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T'+time+':00').toISOString();
+        logSession(modal.coachId, iso); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'addCoach') {
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Add coach</div>' +
+        '<div class="field"><label>Coach name</label><input id="m-name" placeholder="e.g. Coach Ramirez" /></div>' +
+        '<div class="field"><label>Role</label><select id="m-type">' +
+          '<option>Primary tennis coach</option><option>Hitting coach</option><option>Fitness coach</option><option>Mental coach</option><option>Other</option>' +
+        '</select></div>' +
+        '<div class="field"><label>Sessions in prepaid package (optional)</label><input id="m-total" type="number" min="0" placeholder="e.g. 10" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Add coach</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const name = document.getElementById('m-name').value.trim();
+        const type = document.getElementById('m-type').value;
+        const total = parseInt(document.getElementById('m-total').value,10) || 0;
+        if (!name) { document.getElementById('m-name').style.borderColor = 'var(--red)'; return; }
+        addCoach(name, type, total); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'addCourt') {
+      const now = new Date();
+      const today = now.toISOString().slice(0,10);
+      const nowTime = now.toTimeString().slice(0,5);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Log court time</div>' +
+        '<div class="field"><label>Type</label><select id="m-ctype">' +
+          COURT_TYPES.map(t=>'<option>'+t+'</option>').join('') +
+        '</select></div>' +
+        '<div class="field"><label>Date</label><input id="m-cdate" type="date" value="'+today+'" /></div>' +
+        '<div class="field"><label>Start time</label><input id="m-ctime" type="time" value="'+nowTime+'" /></div>' +
+        '<div class="field"><label>Duration (minutes)</label><input id="m-cmin" type="number" min="5" step="5" placeholder="e.g. 90" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-cnotes" placeholder="e.g. serve + return focus" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Log</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const type = document.getElementById('m-ctype').value;
+        const date = document.getElementById('m-cdate').value;
+        const time = document.getElementById('m-ctime').value || '12:00';
+        const minutes = parseInt(document.getElementById('m-cmin').value,10);
+        const notes = document.getElementById('m-cnotes').value.trim();
+        if (!minutes || minutes<=0) { document.getElementById('m-cmin').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-cdate').style.borderColor='var(--red)'; return; }
+        addCourtEntry(type, minutes, date, time, notes); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'addAcademic') {
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Add academic class</div>' +
+        '<div class="field"><label>Subject</label><input id="m-subject" placeholder="e.g. Algebra II" /></div>' +
+        '<div class="field"><label>Tutor (optional)</label><input id="m-tutor" placeholder="e.g. Ms. Alvarez" /></div>' +
+        '<div class="field"><label>Hours in prepaid package (optional)</label><input id="m-atotal" type="number" min="0" step="0.5" placeholder="e.g. 20" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Add class</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const subject = document.getElementById('m-subject').value.trim();
+        const tutor = document.getElementById('m-tutor').value.trim();
+        const totalHours = parseFloat(document.getElementById('m-atotal').value) || 0;
+        if (!subject) { document.getElementById('m-subject').style.borderColor = 'var(--red)'; return; }
+        addAcademicSubject(subject, tutor, totalHours); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'logAcademic') {
+      const now = new Date();
+      const today = now.toISOString().slice(0,10);
+      const nowTime = now.toTimeString().slice(0,5);
+      const subj = academic.find(a=>a.id===modal.subjectId);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Log time — '+esc(subj ? subj.subject : '')+'</div>' +
+        '<div class="field"><label>Date</label><input id="m-adate" type="date" value="'+today+'" /></div>' +
+        '<div class="field"><label>Start time</label><input id="m-atime" type="time" value="'+nowTime+'" /></div>' +
+        '<div class="field"><label>Duration (minutes)</label><input id="m-amin" type="number" min="5" step="5" placeholder="e.g. 60" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-anotes" placeholder="e.g. quadratics review" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Log</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const date = document.getElementById('m-adate').value;
+        const time = document.getElementById('m-atime').value || '12:00';
+        const minutes = parseInt(document.getElementById('m-amin').value,10);
+        const notes = document.getElementById('m-anotes').value.trim();
+        if (!minutes || minutes<=0) { document.getElementById('m-amin').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-adate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T'+time+':00').toISOString();
+        logAcademicTime(modal.subjectId, iso, minutes, notes); modal=null; render();
+      };
+    }
+  }
+
+  load();
+  render();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(()=>{});
+    });
+  }
+})();
+</script>
+</body>
+</html>
