@@ -54,6 +54,7 @@
   let coaches = [];
   let courtLog = [];
   let tab = 'coaches';
+  let sortMode = localStorage.getItem('mav_sort_v1') || 'name';
   let logExpanded = {};
   let modal = null;
 
@@ -146,9 +147,25 @@
   }
 
   function renderCoaches() {
-    let html = '<button class="btn btn-primary fab-add" id="add-coach-btn"><i>+</i> Add coach</button>';
-    if (coaches.length === 0) html += '<div class="empty">No coaches yet. Add one to start logging prepaid sessions.</div>';
-    coaches.forEach(c => {
+    let html = '<div class="row" style="margin-bottom:10px; gap:8px;">';
+    html += '<button class="btn btn-primary" id="add-coach-btn" style="flex:1;">+ Add coach</button>';
+    html += '<select id="sort-select" style="width:auto; flex:1;">';
+    html += '<option value="name"'+(sortMode==='name'?' selected':'')+'>Sort: name (A–Z)</option>';
+    html += '<option value="role"'+(sortMode==='role'?' selected':'')+'>Sort: role (A–Z)</option>';
+    html += '</select>';
+    html += '</div>';
+
+    if (coaches.length === 0) { html += '<div class="empty">No coaches yet. Add one to start logging prepaid sessions.</div>'; return html; }
+
+    const sorted = coaches.slice().sort((a,b) => {
+      if (sortMode === 'role') {
+        const r = a.type.localeCompare(b.type);
+        return r !== 0 ? r : a.name.localeCompare(b.name);
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    sorted.forEach(c => {
       const used = c.log.length, total = c.totalSessions||0, remaining = total-used;
       const pct = total>0 ? Math.min(100, Math.round((used/total)*100)) : 0;
       const low = total>0 && remaining<=2 && remaining>=0;
@@ -186,6 +203,8 @@
   function bindCoachEvents(app) {
     const addBtn = document.getElementById('add-coach-btn');
     if (addBtn) addBtn.onclick = () => { modal = {type:'addCoach'}; render(); };
+    const sortSelect = document.getElementById('sort-select');
+    if (sortSelect) sortSelect.onchange = () => { sortMode = sortSelect.value; localStorage.setItem('mav_sort_v1', sortMode); render(); };
     app.querySelectorAll('[data-action="log"]').forEach(b=>b.onclick=()=>{ modal = {type:'logCoach', coachId:b.dataset.id}; render(); });
     app.querySelectorAll('[data-action="delcoach"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove this coach and all logged sessions?')) deleteCoach(b.dataset.id); });
     app.querySelectorAll('[data-action="toggle"]').forEach(b=>b.onclick=()=>{ logExpanded[b.dataset.id]=!logExpanded[b.dataset.id]; render(); });
