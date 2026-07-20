@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Tennis" />
+<meta name="theme-color" content="#1d9e75" />
+<link rel="apple-touch-icon" href="icon-180.png" />
+<link rel="manifest" href="manifest.json" />
+<script defer src="jspdf.umd.min.js"></script>
+<title>Tennis Tracker</title>
+<style>
+  :root { --green:#1d9e75; --amber:#ba7517; --red:#a32d2d; --border:#e0ddd3; --muted:#666; --surface1:#f7f6f3; --surface2:#efeee9; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:#1a1a1a; background:#fff; padding-bottom:40px; }
+  #app { max-width:720px; margin:0 auto; padding: env(safe-area-inset-top,20px) 16px 20px; }
+  h1 { font-size:20px; font-weight:600; margin:8px 0 16px; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; position:sticky; top:0; background:#fff; padding:8px 0; z-index:5; }
+  .tab { flex:1; text-align:center; padding:10px; border-radius:10px; border:0.5px solid var(--border); background:var(--surface1); font-size:14px; cursor:pointer; }
+  .tab.active { background:var(--green); color:#fff; border-color:var(--green); font-weight:600; }
+  .card { background:var(--surface1); border-radius:12px; padding:1rem 1.1rem; margin-bottom:12px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .btn { border:0.5px solid #ccc; background:#fff; border-radius:8px; padding:9px 14px; cursor:pointer; font-size:14px; color:inherit; }
+  .btn:active { transform:scale(0.98); }
+  .btn-primary { background:var(--green); color:#fff; border:none; font-weight:600; }
+  .btn-danger { color:var(--red); border-color:#f0a0a0; }
+  input, select { height:38px; border-radius:8px; border:0.5px solid #ccc; padding:0 10px; font-size:15px; background:#fff; color:inherit; width:100%; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .field label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; }
+  .name { font-weight:600; font-size:16px; }
+  .sub { font-size:13px; color:var(--muted); }
+  .bar-bg { background:#e4e2da; border-radius:6px; height:6px; overflow:hidden; margin-top:8px; }
+  .bar-fill { height:100%; border-radius:6px; }
+  .log-entry { display:flex; justify-content:space-between; font-size:13px; padding:7px 0; border-top:0.5px solid var(--border); gap:8px; }
+  .empty { text-align:center; color:var(--muted); padding:2rem 0; font-size:14px; }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:20; padding:16px; }
+  .modal { background:#fff; border-radius:14px; padding:1.5rem; width:100%; max-width:340px; display:flex; flex-direction:column; gap:4px; max-height:85vh; overflow:auto; }
+  .modal-title { font-weight:600; font-size:17px; margin-bottom:6px; }
+  .metric-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+  .metric { background:var(--surface1); border-radius:10px; padding:12px 14px; }
+  .metric .label { font-size:12px; color:var(--muted); text-transform:uppercase; }
+  .metric .value { font-size:22px; font-weight:600; margin-top:2px; }
+  .type-pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:var(--surface2); color:#444; }
+  .pill-win { background:#dff2ea; color:var(--green); }
+  .pill-loss { background:#f5e3e3; color:var(--red); }
+  .fab-add { width:100%; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="app"><p class="empty">Loading…</p></div>
+<script>
+(function(){
+  const COACH_KEY = 'mav_coaches_v1';
+  const COURT_KEY = 'mav_courttime_v1';
+  const ACADEMIC_KEY = 'mav_academic_v1';
+  const MATCH_KEY = 'mav_matches_v1';
+  const MY_UTR_KEY = 'mav_my_utr_v1';
+  const WELLNESS_KEY = 'mav_wellness_v1';
+  let coaches = [];
+  let courtLog = [];
+  let academic = [];
+  let matches = [];
+  let wellness = [];
+  let myUTR = null;
+  let tab = 'coaches';
+  let sortMode = localStorage.getItem('mav_sort_v1') || 'name';
+  let logExpanded = {};
+  let topExpanded = localStorage.getItem('mav_top_expanded_v1') === '1';
+  let matchDetailExpanded = localStorage.getItem('mav_match_detail_v1') === '1';
+  let modal = null;
+
+  function load() {
+    try { coaches = JSON.parse(localStorage.getItem(COACH_KEY) || '[]'); } catch(e){ coaches = []; }
+    try { courtLog = JSON.parse(localStorage.getItem(COURT_KEY) || '[]'); } catch(e){ courtLog = []; }
+    try { academic = JSON.parse(localStorage.getItem(ACADEMIC_KEY) || '[]'); } catch(e){ academic = []; }
+    try { matches = JSON.parse(localStorage.getItem(MATCH_KEY) || '[]'); } catch(e){ matches = []; }
+    try { wellness = JSON.parse(localStorage.getItem(WELLNESS_KEY) || '[]'); } catch(e){ wellness = []; }
+    const storedUTR = localStorage.getItem(MY_UTR_KEY);
+    myUTR = storedUTR ? parseFloat(storedUTR) : null;
+    let migrated = false;
+    coaches = coaches.map(c => {
+      if (c.packages) return c;
+      migrated = true;
+      const renewals = (c.renewals||[]).slice().sort((a,b)=> new Date(a.ts)-new Date(b.ts));
+      const totalRenewed = renewals.reduce((s,r)=>s+r.amount,0);
+      const initialTotal = (c.totalSessions||0) - totalRenewed;
+      const boundaries = renewals.map(r=> new Date(r.ts).getTime());
+      const totals = [initialTotal, ...renewals.map(r=>r.amount)];
+      const firstCreated = (c.log && c.log.length) ? c.log[c.log.length-1].ts : new Date().toISOString();
+      const createdTimes = [firstCreated, ...renewals.map(r=>r.ts)];
+      const packages = totals.map((t,i)=>({ id:'p'+i+'_'+c.id, totalSessions:t, createdTs: createdTimes[i], log: [] }));
+      (c.log||[]).forEach(entry => {
+        const t = new Date(entry.ts).getTime();
+        let idx = 0;
+        for (let i=0;i<boundaries.length;i++){ if (t >= boundaries[i]) idx = i+1; }
+        packages[idx].log.push(entry);
+      });
+      packages.forEach(p => p.log.sort((a,b)=> new Date(b.ts)-new Date(a.ts)));
+      return { id:c.id, name:c.name, type:c.type, packages };
+    });
+    if (migrated) saveCoaches();
+  }
+  function saveCoaches() { localStorage.setItem(COACH_KEY, JSON.stringify(coaches)); }
+  function saveCourt() { localStorage.setItem(COURT_KEY, JSON.stringify(courtLog)); }
+  function saveAcademic() { localStorage.setItem(ACADEMIC_KEY, JSON.stringify(academic)); }
+  function saveMatches() { localStorage.setItem(MATCH_KEY, JSON.stringify(matches)); }
+  function saveWellness() { localStorage.setItem(WELLNESS_KEY, JSON.stringify(wellness)); }
+  function saveMyUTR() { if (myUTR===null||myUTR===undefined) localStorage.removeItem(MY_UTR_KEY); else localStorage.setItem(MY_UTR_KEY, String(myUTR)); }
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' · ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  }
+  function fmtDateOnly(iso) {
+    return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+  }
+  function startOfWeek() {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(d.setDate(diff));
+    monday.setHours(0,0,0,0);
+    return monday;
+  }
+
+  // ---------- Coaches ----------
+  function addCoach(name, type, total) {
+    coaches.push({ id:'c'+Date.now(), name, type, packages: [
+      { id:'p0_'+Date.now(), totalSessions: total, createdTs: new Date().toISOString(), log: [] }
+    ] });
+    saveCoaches(); render();
+  }
+  function deleteCoach(id) { coaches = coaches.filter(c=>c.id!==id); saveCoaches(); render(); }
+  function currentPackage(c) { return c.packages[c.packages.length-1]; }
+  function logSession(coachId, isoTs) {
+    const c = coaches.find(c=>c.id===coachId); if (!c) return;
+    const pkg = currentPackage(c);
+    pkg.log.unshift({ id:'l'+Date.now(), ts: isoTs || new Date().toISOString() });
+    pkg.log.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveCoaches(); render();
+  }
+  function deleteCoachEntry(coachId, packageId, entryId) {
+    const c = coaches.find(c=>c.id===coachId); if (!c) return;
+    const pkg = c.packages.find(p=>p.id===packageId); if (!pkg) return;
+    pkg.log = pkg.log.filter(e=>e.id!==entryId);
+    saveCoaches(); render();
+  }
+  function updateCoachEntry(coachId, packageId, entryId, newIso) {
+    const c = coaches.find(c=>c.id===coachId); if (!c) return;
+    const pkg = c.packages.find(p=>p.id===packageId); if (!pkg) return;
+    const entry = pkg.log.find(e=>e.id===entryId); if (!entry) return;
+    entry.ts = newIso;
+    pkg.log.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveCoaches(); render();
+  }
+  function undoLastCoach(coachId) {
+    const c = coaches.find(c=>c.id===coachId); if (!c) return;
+    const pkg = currentPackage(c);
+    if (!pkg.log.length) return;
+    pkg.log.shift(); saveCoaches(); render();
+  }
+  function renewCoach(coachId, addSessions, isoTs) {
+    const c = coaches.find(c=>c.id===coachId); if (!c) return;
+    c.packages.push({ id:'p'+c.packages.length+'_'+Date.now(), totalSessions: addSessions, createdTs: isoTs || new Date().toISOString(), log: [] });
+    saveCoaches(); render();
+  }
+
+  // ---------- Court time ----------
+  const COURT_TYPES = ['Group hit','Individual practice','Match play','Fitness / gym'];
+  function addCourtEntry(type, minutes, dateStr, timeStr, notes) {
+    const iso = dateStr ? new Date(dateStr + 'T' + (timeStr||'12:00') + ':00').toISOString() : new Date().toISOString();
+    courtLog.unshift({ id:'ct'+Date.now(), type, minutes, ts: iso, notes: notes||'' });
+    courtLog.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveCourt(); render();
+  }
+  function deleteCourtEntry(id) { courtLog = courtLog.filter(e=>e.id!==id); saveCourt(); render(); }
+  function updateCourtEntry(id, type, minutes, dateStr, timeStr, notes) {
+    const e = courtLog.find(e=>e.id===id); if (!e) return;
+    e.type = type; e.minutes = minutes; e.notes = notes||'';
+    e.ts = new Date(dateStr + 'T' + (timeStr||'12:00') + ':00').toISOString();
+    courtLog.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveCourt(); render();
+  }
+
+  function courtStats() {
+    const weekStart = startOfWeek();
+    let weekMin = 0, totalMin = 0;
+    const byType = {};
+    courtLog.forEach(e => {
+      totalMin += e.minutes;
+      if (new Date(e.ts) >= weekStart) weekMin += e.minutes;
+      byType[e.type] = (byType[e.type]||0) + e.minutes;
+    });
+    return { weekMin, totalMin, byType };
+  }
+  function hrs(min) { return (min/60).toFixed(1); }
+
+  function weeklyLoad() {
+    const weekStart = startOfWeek();
+    let coachSessions = 0;
+    coaches.forEach(c => {
+      c.packages.forEach(p => {
+        p.log.forEach(e => { if (new Date(e.ts) >= weekStart) coachSessions++; });
+      });
+    });
+    const coachMin = coachSessions * 60;
+    const courtMin = courtStats().weekMin;
+    return { coachSessions, coachMin, courtMin, totalMin: coachMin + courtMin };
+  }
+
+  // ---------- Academic tutoring ----------
+  function addAcademicSubject(subject, tutor, totalHours) {
+    academic.push({ id:'a'+Date.now(), subject, tutor, totalMinutes: Math.round(totalHours*60), log: [] });
+    saveAcademic(); render();
+  }
+  function deleteAcademicSubject(id) { academic = academic.filter(a=>a.id!==id); saveAcademic(); render(); }
+  function logAcademicTime(id, isoTs, minutes, notes) {
+    const a = academic.find(a=>a.id===id); if (!a) return;
+    a.log.unshift({ id:'al'+Date.now(), ts: isoTs, minutes, notes: notes||'' });
+    a.log.sort((x,y)=> new Date(y.ts) - new Date(x.ts));
+    saveAcademic(); render();
+  }
+  function deleteAcademicEntry(subjectId, entryId) {
+    const a = academic.find(a=>a.id===subjectId); if (!a) return;
+    a.log = a.log.filter(e=>e.id!==entryId);
+    saveAcademic(); render();
+  }
+  function updateAcademicEntry(subjectId, entryId, isoTs, minutes, notes) {
+    const a = academic.find(a=>a.id===subjectId); if (!a) return;
+    const e = a.log.find(e=>e.id===entryId); if (!e) return;
+    e.ts = isoTs; e.minutes = minutes; e.notes = notes||'';
+    a.log.sort((x,y)=> new Date(y.ts) - new Date(x.ts));
+    saveAcademic(); render();
+  }
+  function undoLastAcademic(id) {
+    const a = academic.find(a=>a.id===id); if (!a || !a.log.length) return;
+    a.log.shift(); saveAcademic(); render();
+  }
+
+  // ---------- Matches ----------
+  function addMatch(opponent, opponentUTR, result, score, tournament, isoTs, notes) {
+    matches.unshift({ id:'m'+Date.now(), opponent, opponentUTR: opponentUTR || null, result, score: score||'', tournament: tournament||'', ts: isoTs, notes: notes||'' });
+    matches.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveMatches(); render();
+  }
+  function deleteMatch(id) { matches = matches.filter(m=>m.id!==id); saveMatches(); render(); }
+  function updateMatch(id, opponent, opponentUTR, result, score, tournament, isoTs, notes) {
+    const m = matches.find(m=>m.id===id); if (!m) return;
+    m.opponent = opponent; m.opponentUTR = opponentUTR || null; m.result = result;
+    m.score = score||''; m.tournament = tournament||''; m.ts = isoTs; m.notes = notes||'';
+    matches.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+    saveMatches(); render();
+  }
+  function matchStats() {
+    let wins = 0, losses = 0;
+    matches.forEach(m => { if (m.result==='W') wins++; else if (m.result==='L') losses++; });
+    const total = wins+losses;
+    const winPct = total>0 ? Math.round((wins/total)*100) : null;
+    return { wins, losses, total, winPct };
+  }
+  function utrBreakdown() {
+    if (myUTR === null || myUTR === undefined || isNaN(myUTR)) return null;
+    const buckets = { higher: {w:0,l:0}, similar: {w:0,l:0}, lower: {w:0,l:0} };
+    let missing = 0;
+    matches.forEach(m => {
+      if (m.opponentUTR === null || m.opponentUTR === undefined || m.opponentUTR === '') { missing++; return; }
+      if (m.result !== 'W' && m.result !== 'L') return;
+      const diff = m.opponentUTR - myUTR;
+      const bucket = diff > 0.25 ? 'higher' : diff < -0.25 ? 'lower' : 'similar';
+      if (m.result === 'W') buckets[bucket].w++; else buckets[bucket].l++;
+    });
+    return { buckets, missing };
+  }
+
+  // ---------- Wellness ----------
+  function upsertWellness(dateStr, restDay, soreness, notes, editEntryId) {
+    if (editEntryId) wellness = wellness.filter(w=>w.id!==editEntryId);
+    const existing = wellness.find(w=>w.date===dateStr);
+    if (existing) {
+      existing.restDay = restDay; existing.soreness = restDay ? null : soreness; existing.notes = notes||'';
+    } else {
+      wellness.push({ id:'w'+Date.now(), date: dateStr, restDay, soreness: restDay ? null : soreness, notes: notes||'' });
+    }
+    wellness.sort((a,b)=> b.date.localeCompare(a.date));
+    saveWellness(); render();
+  }
+  function deleteWellness(id) { wellness = wellness.filter(w=>w.id!==id); saveWellness(); render(); }
+  function wellnessStatsForWeek(weekStart) {
+    const weekEnd = new Date(weekStart.getTime() + 7*24*60*60*1000);
+    let restDays = 0, soreSum = 0, soreCount = 0;
+    wellness.forEach(w => {
+      const d = new Date(w.date+'T12:00:00');
+      if (d >= weekStart && d < weekEnd) {
+        if (w.restDay) restDays++;
+        else if (w.soreness !== null && w.soreness !== undefined) { soreSum += w.soreness; soreCount++; }
+      }
+    });
+    return { restDays, avgSoreness: soreCount>0 ? (soreSum/soreCount) : null };
+  }
+
+  function loadForWeek(weekStart) {
+    const weekEnd = new Date(weekStart.getTime() + 7*24*60*60*1000);
+    let coachSessions = 0;
+    coaches.forEach(c => c.packages.forEach(p => p.log.forEach(e => {
+      const t = new Date(e.ts);
+      if (t >= weekStart && t < weekEnd) coachSessions++;
+    })));
+    let courtMin = 0;
+    courtLog.forEach(e => {
+      const t = new Date(e.ts);
+      if (t >= weekStart && t < weekEnd) courtMin += e.minutes;
+    });
+    return coachSessions*60 + courtMin;
+  }
+  function trailingAvg(weekStart) {
+    let sum = 0;
+    for (let i=1;i<=4;i++) {
+      const ws = new Date(weekStart.getTime() - i*7*24*60*60*1000);
+      sum += loadForWeek(ws);
+    }
+    return sum/4;
+  }
+  function weeklyTrend(weeks) {
+    const start = startOfWeek();
+    const out = [];
+    for (let i=weeks-1; i>=0; i--) {
+      const ws = new Date(start.getTime() - i*7*24*60*60*1000);
+      const totalMin = loadForWeek(ws);
+      const avg = trailingAvg(ws);
+      const spike = avg > 0 && totalMin > avg * 1.35;
+      out.push({ weekStart: ws, totalMin, spike });
+    }
+    return out;
+  }
+  function renderTrendChart(data) {
+    const w = 320, h = 130, padTop = 14, padBottom = 22, chartH = h - padTop - padBottom;
+    const maxMin = Math.max.apply(null, data.map(d=>d.totalMin).concat([60]));
+    const barW = 26, gap = (w - data.length*barW) / (data.length+1);
+    let bars = '';
+    let anySpike = false;
+    data.forEach((d,i) => {
+      const x = gap + i*(barW+gap);
+      const barH = maxMin>0 ? (d.totalMin/maxMin)*chartH : 0;
+      const y = padTop + (chartH - barH);
+      const label = d.weekStart.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+      const fill = d.spike ? '#ba7517' : '#1d9e75';
+      if (d.spike) anySpike = true;
+      bars += '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barW+'" height="'+Math.max(barH,0).toFixed(1)+'" rx="3" fill="'+fill+'"></rect>';
+      if (d.spike) bars += '<text x="'+(x+barW/2).toFixed(1)+'" y="'+Math.max(y-10,8).toFixed(1)+'" font-size="10" text-anchor="middle">⚠</text>';
+      bars += '<text x="'+(x+barW/2).toFixed(1)+'" y="'+(h-6)+'" font-size="8" fill="#666" text-anchor="middle">'+esc(label)+'</text>';
+      bars += '<text x="'+(x+barW/2).toFixed(1)+'" y="'+Math.max(y-4,10).toFixed(1)+'" font-size="8" fill="#333" text-anchor="middle">'+hrs(d.totalMin)+'</text>';
+    });
+    let out = '<svg viewBox="0 0 '+w+' '+h+'" style="width:100%; height:auto; display:block;">'+bars+'</svg>';
+    if (anySpike) out += '<div class="sub" style="margin-top:2px;">⚠ amber = jumped 35%+ over the trailing 4-week average</div>';
+    return out;
+  }
+
+  function lowPackageAlerts() {
+    const alerts = [];
+    coaches.forEach(c => {
+      const pkg = currentPackage(c);
+      const total = pkg.totalSessions||0;
+      if (total<=0) return;
+      const remaining = total - pkg.log.length;
+      if (remaining<0) alerts.push({ tab:'coaches', label: c.name, detail: 'over by '+Math.abs(remaining), severity:'over' });
+      else if (remaining<=2) alerts.push({ tab:'coaches', label: c.name, detail: remaining+' left', severity:'low' });
+    });
+    academic.forEach(a => {
+      const total = a.totalMinutes||0;
+      if (total<=0) return;
+      const usedMin = a.log.reduce((s,e)=>s+e.minutes,0);
+      const remaining = total - usedMin;
+      if (remaining<0) alerts.push({ tab:'academic', label: a.subject, detail: 'over by '+hrs(Math.abs(remaining))+'h', severity:'over' });
+      else if (remaining<=60) alerts.push({ tab:'academic', label: a.subject, detail: hrs(remaining)+'h left', severity:'low' });
+    });
+    return alerts;
+  }
+
+  // ---------- Shareable weekly summary ----------
+  function weeklySummaryData() {
+    const weekStart = startOfWeek();
+    const weekEnd = new Date(weekStart.getTime() + 7*24*60*60*1000);
+    const weekEndDisplay = new Date(weekEnd.getTime() - 24*60*60*1000);
+    const rangeLabel = weekStart.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + '–' + weekEndDisplay.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+
+    let coachTotal = 0;
+    const coachBreakdown = [];
+    coaches.forEach(c => {
+      let count = 0;
+      c.packages.forEach(p => p.log.forEach(e => {
+        const t = new Date(e.ts);
+        if (t>=weekStart && t<weekEnd) count++;
+      }));
+      if (count>0) { coachTotal += count; coachBreakdown.push({ name: c.name, count }); }
+    });
+
+    let courtTotalMin = 0;
+    const courtByType = {};
+    courtLog.forEach(e => {
+      const t = new Date(e.ts);
+      if (t>=weekStart && t<weekEnd) {
+        courtTotalMin += e.minutes;
+        courtByType[e.type] = (courtByType[e.type]||0) + e.minutes;
+      }
+    });
+
+    const totalTrainingMin = coachTotal*60 + courtTotalMin;
+
+    let acadTotalMin = 0;
+    const acadBreakdown = [];
+    academic.forEach(a => {
+      let min = 0;
+      a.log.forEach(e => {
+        const t = new Date(e.ts);
+        if (t>=weekStart && t<weekEnd) min += e.minutes;
+      });
+      if (min>0) { acadTotalMin += min; acadBreakdown.push({ subject: a.subject, min }); }
+    });
+
+    const weekMatches = matches.filter(m => { const t=new Date(m.ts); return t>=weekStart && t<weekEnd; })
+      .slice().sort((a,b)=> new Date(a.ts) - new Date(b.ts));
+    let matchW=0, matchL=0;
+    weekMatches.forEach(m=>{ if(m.result==='W') matchW++; else if(m.result==='L') matchL++; });
+
+    const wellnessThisWeek = wellnessStatsForWeek(weekStart);
+    const trend = weeklyTrend(8);
+
+    return {
+      weekStart, weekEnd, rangeLabel,
+      coachTotal, coachBreakdown, coachMin: coachTotal*60,
+      courtTotalMin, courtByType,
+      totalTrainingMin,
+      acadTotalMin, acadBreakdown,
+      weekMatches, matchW, matchL,
+      wellness: wellnessThisWeek,
+      trend
+    };
+  }
+  function weeklySummaryText() {
+    const d = weeklySummaryData();
+    const lines = [];
+    lines.push('Maverick — Week of ' + d.rangeLabel);
+    lines.push('');
+    lines.push('Training load: ' + hrs(d.totalTrainingMin) + ' hrs');
+    if (d.coachTotal>0) {
+      lines.push('- Coach sessions: ' + d.coachTotal + ' (~' + hrs(d.coachMin) + 'h)');
+      d.coachBreakdown.forEach(cb => lines.push('  - ' + cb.name + ': ' + cb.count + ' session' + (cb.count===1?'':'s')));
+    }
+    if (d.courtTotalMin>0) {
+      const typeStr = Object.keys(d.courtByType).map(t=>t+' '+hrs(d.courtByType[t])+'h').join(', ');
+      lines.push('- Court/gym: ' + hrs(d.courtTotalMin) + 'h (' + typeStr + ')');
+    }
+    if (d.coachTotal===0 && d.courtTotalMin===0) lines.push('- No training logged this week');
+    lines.push('');
+    if (d.acadTotalMin>0) {
+      lines.push('Academic: ' + hrs(d.acadTotalMin) + ' hrs');
+      d.acadBreakdown.forEach(ab => lines.push('  - ' + ab.subject + ': ' + hrs(ab.min) + 'h'));
+      lines.push('');
+    }
+    if (d.weekMatches.length>0) {
+      lines.push('Matches: ' + d.matchW + '–' + d.matchL);
+      d.weekMatches.forEach(m => {
+        let line = '  - ' + m.result + ' vs ' + m.opponent;
+        if (m.opponentUTR) line += ' (UTR ' + m.opponentUTR + ')';
+        if (m.score) line += ' ' + m.score;
+        if (m.tournament) line += ' — ' + m.tournament;
+        lines.push(line);
+      });
+      lines.push('');
+    }
+    if (d.wellness.restDays>0 || d.wellness.avgSoreness!==null) {
+      let wline = 'Wellness: ' + d.wellness.restDays + ' rest day' + (d.wellness.restDays===1?'':'s');
+      if (d.wellness.avgSoreness!==null) wline += ', avg soreness ' + d.wellness.avgSoreness.toFixed(1) + '/5';
+      lines.push(wline);
+    }
+    return lines.join('\n').trim();
+  }
+  function shareWeeklySummary() {
+    const text = weeklySummaryText();
+    if (navigator.share) {
+      navigator.share({ text }).catch(()=>{});
+    } else if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(()=> alert('Weekly summary copied to clipboard.')).catch(()=> alert('Could not copy — select and copy the text manually.'));
+    } else {
+      window.prompt('Copy this summary:', text);
+    }
+  }
+
+  // ---------- PDF weekly report ----------
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function buildWeeklyPdfDoc() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit:'pt', format:'letter' });
+    const marginX = 40, pageH = 792, contentW = 612 - marginX*2;
+    let y = 50;
+    const GREEN=[29,158,117], AMBER=[186,117,23], RED=[163,45,45], MUTED=[102,102,102], DARK=[26,26,26], SURFACE=[247,246,243];
+    const d = weeklySummaryData();
+    function ensureSpace(needed) { if (y + needed > pageH - 40) { doc.addPage(); y = 50; } }
+
+    doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+    doc.text('Maverick — Weekly Report', marginX, y);
+    y += 20;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]);
+    doc.text('Week of ' + d.rangeLabel + '   ·   Generated ' + new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}), marginX, y);
+    y += 26;
+
+    const cardVals = [
+      { label:'TRAINING', value: hrs(d.totalTrainingMin)+'h' },
+      { label:'COACH SESSIONS', value: String(d.coachTotal) },
+      { label:'ACADEMIC', value: hrs(d.acadTotalMin)+'h' },
+      { label:'MATCH RECORD', value: d.matchW+'–'+d.matchL }
+    ];
+    const gap = 10, cardW = (contentW - gap*3)/4, cardH = 54;
+    cardVals.forEach((c,i) => {
+      const x = marginX + i*(cardW+gap);
+      doc.setFillColor(SURFACE[0],SURFACE[1],SURFACE[2]);
+      doc.roundedRect(x, y, cardW, cardH, 6, 6, 'F');
+      doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]);
+      doc.text(c.label, x+9, y+17);
+      doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+      doc.text(c.value, x+9, y+38);
+    });
+    y += cardH + 26;
+
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+    doc.text('Last 8 weeks — training load', marginX, y);
+    y += 16;
+    const chartH = 90, chartTop = y;
+    const maxMin = Math.max.apply(null, d.trend.map(t=>t.totalMin).concat([60]));
+    const barSlot = contentW / d.trend.length;
+    const barW = barSlot - 10;
+    d.trend.forEach((wk,i) => {
+      const bx = marginX + i*barSlot + (barSlot-barW)/2;
+      const bh = maxMin>0 ? (wk.totalMin/maxMin)*chartH : 0;
+      const by = chartTop + (chartH - bh);
+      const color = wk.spike ? AMBER : GREEN;
+      doc.setFillColor(color[0],color[1],color[2]);
+      doc.roundedRect(bx, by, barW, Math.max(bh,1), 2, 2, 'F');
+      doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+      doc.text(hrs(wk.totalMin), bx+barW/2, Math.max(by-4,chartTop-2), { align:'center' });
+      doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]);
+      doc.text(wk.weekStart.toLocaleDateString(undefined,{month:'short',day:'numeric'}), bx+barW/2, chartTop+chartH+13, { align:'center' });
+    });
+    y = chartTop + chartH + 28;
+
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+    doc.text('Training detail', marginX, y); y += 15;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+    if (d.coachTotal>0) {
+      doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+      doc.text('Coach sessions: ' + d.coachTotal + ' (~' + hrs(d.coachMin) + 'h)', marginX, y); y+=13;
+      doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]);
+      d.coachBreakdown.forEach(cb => { doc.text('  ' + cb.name + ': ' + cb.count, marginX, y); y+=12; });
+    }
+    if (d.courtTotalMin>0) {
+      const typeStr = Object.keys(d.courtByType).map(t=>t+' '+hrs(d.courtByType[t])+'h').join(', ');
+      doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+      doc.text('Court/gym: ' + hrs(d.courtTotalMin) + 'h (' + typeStr + ')', marginX, y); y+=13;
+    }
+    if (d.coachTotal===0 && d.courtTotalMin===0) { doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]); doc.text('No training logged this week.', marginX, y); y+=13; }
+    y += 14;
+
+    ensureSpace(30);
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+    doc.text('Matches', marginX, y); y += 16;
+    if (d.weekMatches.length===0) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]);
+      doc.text('No matches logged this week.', marginX, y); y+=13;
+    } else {
+      d.weekMatches.forEach(m => {
+        ensureSpace(20);
+        const badgeColor = m.result==='W' ? GREEN : RED;
+        doc.setFillColor(badgeColor[0],badgeColor[1],badgeColor[2]);
+        doc.roundedRect(marginX, y-9, 20, 14, 3, 3, 'F');
+        doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(255,255,255);
+        doc.text(m.result, marginX+10, y+1, { align:'center' });
+        let line = 'vs ' + m.opponent;
+        if (m.opponentUTR) line += ' (UTR ' + m.opponentUTR + ')';
+        if (m.score) line += ' — ' + m.score;
+        doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+        doc.text(line, marginX+28, y+1);
+        y += 14;
+        if (m.tournament) { doc.setFontSize(8); doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]); doc.text(m.tournament, marginX+28, y-3); y+=10; }
+      });
+    }
+    y += 12;
+
+    ensureSpace(24);
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+    doc.text('Wellness', marginX, y); y += 15;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+    if (d.wellness.restDays>0 || d.wellness.avgSoreness!==null) {
+      let wline = 'Rest days: ' + d.wellness.restDays;
+      if (d.wellness.avgSoreness!==null) wline += '   ·   Avg soreness: ' + d.wellness.avgSoreness.toFixed(1) + '/5';
+      doc.setTextColor(DARK[0],DARK[1],DARK[2]);
+      doc.text(wline, marginX, y); y+=13;
+    } else {
+      doc.setTextColor(MUTED[0],MUTED[1],MUTED[2]);
+      doc.text('No check-ins logged this week.', marginX, y); y+=13;
+    }
+
+    return doc;
+  }
+  async function sharePdfReport() {
+    if (typeof window.jspdf === 'undefined') { alert('PDF tools are still loading — try again in a moment.'); return; }
+    const doc = buildWeeklyPdfDoc();
+    const blob = doc.output('blob');
+    const d = weeklySummaryData();
+    const filename = 'maverick-weekly-' + d.weekStart.toISOString().slice(0,10) + '.pdf';
+    if (navigator.canShare) {
+      try {
+        const file = new File([blob], filename, { type: 'application/pdf' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: 'Maverick Weekly Report' });
+          return;
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+    }
+    downloadBlob(blob, filename);
+  }
+
+  // ---------- Backup ----------
+  function exportBackup() {
+    const data = { version: 2, exportedAt: new Date().toISOString(), coaches, courtLog, academic, matches, wellness, sortMode, myUTR };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'mav-tennis-backup-' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function handleImportFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || !Array.isArray(data.coaches) || !Array.isArray(data.courtLog) || !Array.isArray(data.academic)) {
+          alert("This file doesn't look like a valid backup.");
+          return;
+        }
+        const dateLabel = data.exportedAt ? fmtDateOnly(data.exportedAt) : 'unknown date';
+        if (!confirm('This will replace all current data on this device with the backup from ' + dateLabel + '. Continue?')) return;
+        coaches = data.coaches; courtLog = data.courtLog; academic = data.academic;
+        matches = Array.isArray(data.matches) ? data.matches : [];
+        wellness = Array.isArray(data.wellness) ? data.wellness : [];
+        if (typeof data.myUTR === 'number' && !isNaN(data.myUTR)) { myUTR = data.myUTR; } else { myUTR = null; }
+        saveMyUTR();
+        if (data.sortMode) { sortMode = data.sortMode; localStorage.setItem('mav_sort_v1', sortMode); }
+        saveCoaches(); saveCourt(); saveAcademic(); saveMatches(); saveWellness();
+        render();
+      } catch (err) {
+        alert("Couldn't read that file — make sure it's a backup exported from this app.");
+      }
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  }
+
+  // ---------- Render ----------
+  function render() {
+    const app = document.getElementById('app');
+    let html = '<h1>Maverick — activity tracker</h1>';
+
+    const wl = weeklyLoad();
+    html += '<div class="card" id="top-toggle" style="margin-bottom:8px; cursor:pointer; padding:0.7rem 1.1rem;">';
+    html += '<div class="row"><span>This week: <strong>' + hrs(wl.totalMin) + ' hrs</strong></span><span class="sub" style="font-size:16px;">'+(topExpanded?'Hide ▴':'Details ▾')+'</span></div>';
+    html += '</div>';
+
+    if (topExpanded) {
+      html += '<div class="card" style="margin-bottom:8px;">';
+      html += '<span class="sub" style="text-transform:uppercase; letter-spacing:0.03em; font-weight:600;">This week · total training load</span>';
+      html += '<div style="font-size:22px; font-weight:700; margin-top:4px;">' + hrs(wl.totalMin) + ' hrs</div>';
+      html += '<div class="sub" style="margin-top:4px;">Coach: ' + wl.coachSessions + ' session' + (wl.coachSessions===1?'':'s') + ' (~' + hrs(wl.coachMin) + 'h) · Court/gym: ' + hrs(wl.courtMin) + 'h</div>';
+      const ws = wellnessStatsForWeek(startOfWeek());
+      if (ws.restDays>0 || ws.avgSoreness!==null) {
+        html += '<div class="sub" style="margin-top:2px;">Rest days: '+ws.restDays+(ws.avgSoreness!==null?' · Avg soreness: '+ws.avgSoreness.toFixed(1)+'/5':'')+'</div>';
+      }
+      html += '</div>';
+
+      html += '<div class="card" style="margin-bottom:8px;">';
+      html += '<span class="sub" style="text-transform:uppercase; letter-spacing:0.03em; font-weight:600;">Last 8 weeks</span>';
+      html += renderTrendChart(weeklyTrend(8));
+      html += '</div>';
+
+      html += '<div class="row" style="margin-bottom:8px; gap:8px;">';
+      html += '<button class="btn btn-primary" id="share-summary-btn" style="flex:1; font-size:12px;">📤 Share text</button>';
+      html += '<button class="btn btn-primary" id="share-pdf-btn" style="flex:1; font-size:12px;">📄 PDF report</button>';
+      html += '</div>';
+
+      html += '<div class="row" style="margin-bottom:12px; gap:8px;">';
+      html += '<button class="btn" id="export-btn" style="flex:1; font-size:12px;">⬇ Export backup</button>';
+      html += '<button class="btn" id="import-btn" style="flex:1; font-size:12px;">⬆ Import backup</button>';
+      html += '<input type="file" id="import-file" accept="application/json" style="display:none;" />';
+      html += '</div>';
+    }
+
+    const alerts = lowPackageAlerts();
+    if (alerts.length > 0) {
+      const anyOver = alerts.some(a=>a.severity==='over');
+      const bg = anyOver ? '#f5e3e3' : '#faf1e2';
+      const fg = anyOver ? 'var(--red)' : 'var(--amber)';
+      html += '<div class="card" style="margin-bottom:8px; background:'+bg+'; color:'+fg+'; padding:0.7rem 1.1rem;">';
+      html += '<div style="font-weight:600; font-size:13px; margin-bottom:4px;">⚠ Running low</div>';
+      html += '<div style="display:flex; flex-wrap:wrap; gap:6px;">';
+      alerts.forEach((a,i) => {
+        html += '<button class="btn" data-action="gotoalert" data-tab="'+a.tab+'" style="font-size:12px; padding:4px 10px; border-color:'+fg+'; color:'+fg+';">'+esc(a.label)+' · '+esc(a.detail)+'</button>';
+      });
+      html += '</div></div>';
+    }
+
+    html += '<div class="tabs">';
+    html += '<div class="tab ' + (tab==='coaches'?'active':'') + '" data-tab="coaches">Coach</div>';
+    html += '<div class="tab ' + (tab==='court'?'active':'') + '" data-tab="court">Court</div>';
+    html += '<div class="tab ' + (tab==='academic'?'active':'') + '" data-tab="academic">Academic</div>';
+    html += '<div class="tab ' + (tab==='matches'?'active':'') + '" data-tab="matches">Matches</div>';
+    html += '<div class="tab ' + (tab==='wellness'?'active':'') + '" data-tab="wellness">Wellness</div>';
+    html += '</div>';
+
+    if (tab === 'coaches') html += renderCoaches();
+    else if (tab === 'court') html += renderCourt();
+    else if (tab === 'academic') html += renderAcademic();
+    else if (tab === 'matches') html += renderMatches();
+    else html += renderWellness();
+
+    app.innerHTML = html;
+
+    app.querySelectorAll('.tab').forEach(t => t.onclick = () => { tab = t.dataset.tab; render(); });
+
+    const topToggle = document.getElementById('top-toggle');
+    if (topToggle) topToggle.onclick = () => { topExpanded = !topExpanded; localStorage.setItem('mav_top_expanded_v1', topExpanded ? '1' : '0'); render(); };
+
+    app.querySelectorAll('[data-action="gotoalert"]').forEach(b=>b.onclick=()=>{ tab = b.dataset.tab; render(); });
+
+    const exportBtn = document.getElementById('export-btn');
+    if (exportBtn) exportBtn.onclick = exportBackup;
+    const shareBtn = document.getElementById('share-summary-btn');
+    if (shareBtn) shareBtn.onclick = shareWeeklySummary;
+    const pdfBtn = document.getElementById('share-pdf-btn');
+    if (pdfBtn) pdfBtn.onclick = sharePdfReport;
+    const importBtn = document.getElementById('import-btn');
+    const importFile = document.getElementById('import-file');
+    if (importBtn && importFile) {
+      importBtn.onclick = () => importFile.click();
+      importFile.onchange = handleImportFile;
+    }
+
+    if (tab === 'coaches') bindCoachEvents(app);
+    else if (tab === 'court') bindCourtEvents(app);
+    else if (tab === 'academic') bindAcademicEvents(app);
+    else if (tab === 'matches') bindMatchEvents(app);
+    else bindWellnessEvents(app);
+
+
+    renderModal();
+  }
+
+  function renderCoaches() {
+    let html = '<div class="row" style="margin-bottom:10px; gap:8px;">';
+    html += '<button class="btn btn-primary" id="add-coach-btn" style="flex:1;">+ Add coach</button>';
+    html += '<select id="sort-select" style="width:auto; flex:1;">';
+    html += '<option value="name"'+(sortMode==='name'?' selected':'')+'>Sort: name (A–Z)</option>';
+    html += '<option value="role"'+(sortMode==='role'?' selected':'')+'>Sort: role (A–Z)</option>';
+    html += '</select>';
+    html += '</div>';
+
+    if (coaches.length === 0) { html += '<div class="empty">No coaches yet. Add one to start logging prepaid sessions.</div>'; return html; }
+
+    const sorted = coaches.slice().sort((a,b) => {
+      if (sortMode === 'role') {
+        const r = a.type.localeCompare(b.type);
+        return r !== 0 ? r : a.name.localeCompare(b.name);
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    sorted.forEach(c => {
+      const pkg = currentPackage(c);
+      const used = pkg.log.length, total = pkg.totalSessions||0, remaining = total-used;
+      const pct = total>0 ? Math.min(100, Math.round((used/total)*100)) : 0;
+      const low = total>0 && remaining<=2 && remaining>=0;
+      const over = remaining<0;
+      const barColor = over ? 'var(--red)' : low ? 'var(--amber)' : 'var(--green)';
+      const older = c.packages.slice(0, -1).reverse();
+
+      html += '<div class="card">';
+      html += '<div class="row"><div><div class="name">'+esc(c.name)+'</div><div class="sub">'+esc(c.type)+(c.packages.length>1?' · package '+c.packages.length:'')+'</div></div>';
+      html += '<div style="display:flex; gap:8px; flex-wrap:wrap;">';
+      html += '<button class="btn" data-action="log" data-id="'+c.id+'">+ Log session</button>';
+      html += '<button class="btn" data-action="renew" data-id="'+c.id+'">Renew</button>';
+      html += '<button class="btn" data-action="delcoach" data-id="'+c.id+'" aria-label="Delete">✕</button>';
+      html += '</div></div>';
+
+      if (total>0) {
+        html += '<div class="row" style="margin-top:10px;">';
+        html += '<span class="sub">'+used+' of '+total+' used'+(over?' (over by '+Math.abs(remaining)+')':'')+'</span>';
+        html += '<span class="sub" style="font-weight:600; color:'+barColor+';">'+(over?0:remaining)+' left</span></div>';
+        html += '<div class="bar-bg"><div class="bar-fill" style="width:'+pct+'%; background:'+barColor+';"></div></div>';
+        html += '<div class="sub" style="margin-top:6px;">Package started '+fmtDateOnly(pkg.createdTs)+'</div>';
+      } else {
+        html += '<div class="sub" style="margin-top:10px;">'+used+' sessions logged (no package total set)</div>';
+      }
+
+      if (pkg.log.length>0) {
+        html += '<div style="margin-top:10px;">';
+        html += '<button class="btn" style="font-size:12px; padding:5px 10px;" data-action="toggle" data-key="'+pkg.id+'">'+(logExpanded[pkg.id]?'Hide log':'Show log ('+pkg.log.length+')')+'</button> ';
+        html += '<button class="btn btn-danger" style="font-size:12px; padding:5px 10px;" data-action="undocoach" data-id="'+c.id+'">Undo last</button></div>';
+        if (logExpanded[pkg.id]) {
+          html += '<div style="margin-top:6px;">';
+          pkg.log.forEach(e => html += '<div class="log-entry"><span>'+fmtDate(e.ts)+'</span><span style="display:flex; gap:4px;"><button class="btn" style="padding:2px 8px; font-size:12px;" data-action="editentry" data-coach="'+c.id+'" data-package="'+pkg.id+'" data-entry="'+e.id+'">✎</button><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delentry" data-coach="'+c.id+'" data-package="'+pkg.id+'" data-entry="'+e.id+'">✕</button></span></div>');
+          html += '</div>';
+        }
+      }
+
+      if (older.length>0) {
+        html += '<div style="margin-top:14px; border-top:0.5px solid var(--border); padding-top:10px;">';
+        html += '<div class="sub" style="font-weight:600; margin-bottom:6px;">Previous packages</div>';
+        older.forEach((p,idx) => {
+          const pUsed = p.log.length, pTotal = p.totalSessions||0;
+          const pOver = pTotal>0 && pUsed>pTotal;
+          html += '<div class="row" style="margin-top:4px;">';
+          html += '<span class="sub">'+fmtDateOnly(p.createdTs)+' · '+pUsed+(pTotal>0?' of '+pTotal:'')+' used'+(pOver?' (over)':'')+'</span>';
+          html += '<button class="btn" style="font-size:12px; padding:3px 8px;" data-action="toggle" data-key="'+p.id+'">'+(logExpanded[p.id]?'Hide':'Log')+'</button>';
+          html += '</div>';
+          if (logExpanded[p.id]) {
+            html += '<div style="margin:4px 0 8px;">';
+            p.log.forEach(e => html += '<div class="log-entry"><span>'+fmtDate(e.ts)+'</span><span style="display:flex; gap:4px;"><button class="btn" style="padding:2px 8px; font-size:12px;" data-action="editentry" data-coach="'+c.id+'" data-package="'+p.id+'" data-entry="'+e.id+'">✎</button><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delentry" data-coach="'+c.id+'" data-package="'+p.id+'" data-entry="'+e.id+'">✕</button></span></div>');
+            html += '</div>';
+          }
+        });
+        html += '</div>';
+      }
+
+      html += '</div>';
+    });
+    return html;
+  }
+
+  function bindCoachEvents(app) {
+    const addBtn = document.getElementById('add-coach-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'addCoach'}; render(); };
+    const sortSelect = document.getElementById('sort-select');
+    if (sortSelect) sortSelect.onchange = () => { sortMode = sortSelect.value; localStorage.setItem('mav_sort_v1', sortMode); render(); };
+    app.querySelectorAll('[data-action="log"]').forEach(b=>b.onclick=()=>{ modal = {type:'logCoach', coachId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="renew"]').forEach(b=>b.onclick=()=>{ modal = {type:'renewCoach', coachId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="delcoach"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove this coach and all packages and logged sessions?')) deleteCoach(b.dataset.id); });
+    app.querySelectorAll('[data-action="toggle"]').forEach(b=>b.onclick=()=>{ logExpanded[b.dataset.key]=!logExpanded[b.dataset.key]; render(); });
+    app.querySelectorAll('[data-action="undocoach"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove most recent session?')) undoLastCoach(b.dataset.id); });
+    app.querySelectorAll('[data-action="editentry"]').forEach(b=>b.onclick=()=>{ modal = {type:'editCoachEntry', coachId:b.dataset.coach, packageId:b.dataset.package, entryId:b.dataset.entry}; render(); });
+    app.querySelectorAll('[data-action="delentry"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this logged session?')) deleteCoachEntry(b.dataset.coach, b.dataset.package, b.dataset.entry); });
+  }
+
+  function renderCourt() {
+    const stats = courtStats();
+    let html = '<div class="metric-grid">';
+    html += '<div class="metric"><div class="label">This week</div><div class="value">'+hrs(stats.weekMin)+' hrs</div></div>';
+    html += '<div class="metric"><div class="label">All time</div><div class="value">'+hrs(stats.totalMin)+' hrs</div></div>';
+    html += '</div>';
+
+    html += '<div class="card" style="display:flex; gap:6px; flex-wrap:wrap;">';
+    COURT_TYPES.forEach(t => {
+      const m = stats.byType[t] || 0;
+      html += '<span class="type-pill">'+esc(t)+': '+hrs(m)+'h</span>';
+    });
+    html += '</div>';
+
+    html += '<button class="btn btn-primary fab-add" id="add-court-btn">+ Log court time</button>';
+
+    if (courtLog.length === 0) {
+      html += '<div class="empty">No court time logged yet.</div>';
+    } else {
+      html += '<div class="card">';
+      courtLog.forEach(e => {
+        html += '<div class="log-entry"><span><span class="type-pill">'+esc(e.type)+'</span> '+fmtDate(e.ts)+' · '+hrs(e.minutes)+'h'+(e.notes?' · '+esc(e.notes):'')+'</span>';
+        html += '<span style="display:flex; gap:4px;"><button class="btn" style="padding:2px 8px; font-size:12px;" data-action="editcourt" data-id="'+e.id+'">✎</button><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delcourt" data-id="'+e.id+'">✕</button></span></div>';
+      });
+      html += '</div>';
+    }
+    return html;
+  }
+
+  function bindCourtEvents(app) {
+    const addBtn = document.getElementById('add-court-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'addCourt'}; render(); };
+    app.querySelectorAll('[data-action="editcourt"]').forEach(b=>b.onclick=()=>{ modal = {type:'editCourt', entryId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="delcourt"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this entry?')) deleteCourtEntry(b.dataset.id); });
+  }
+
+  function renderAcademic() {
+    let html = '<button class="btn btn-primary fab-add" id="add-academic-btn">+ Add class</button>';
+    if (academic.length === 0) { html += '<div class="empty">No academic classes yet. Add one to start tracking prepaid hours.</div>'; return html; }
+
+    academic.forEach(a => {
+      const usedMin = a.log.reduce((s,e)=>s+e.minutes, 0);
+      const totalMin = a.totalMinutes || 0;
+      const remainingMin = totalMin - usedMin;
+      const pct = totalMin>0 ? Math.min(100, Math.round((usedMin/totalMin)*100)) : 0;
+      const low = totalMin>0 && remainingMin<=60 && remainingMin>=0;
+      const over = remainingMin<0;
+      const barColor = over ? 'var(--red)' : low ? 'var(--amber)' : 'var(--green)';
+
+      html += '<div class="card">';
+      html += '<div class="row"><div><div class="name">'+esc(a.subject)+'</div><div class="sub">'+esc(a.tutor||'')+'</div></div>';
+      html += '<div style="display:flex; gap:8px;">';
+      html += '<button class="btn" data-action="logac" data-id="'+a.id+'">+ Log time</button>';
+      html += '<button class="btn" data-action="delac" data-id="'+a.id+'" aria-label="Delete">✕</button>';
+      html += '</div></div>';
+
+      if (totalMin>0) {
+        html += '<div class="row" style="margin-top:10px;">';
+        html += '<span class="sub">'+hrs(usedMin)+' of '+hrs(totalMin)+' hrs used'+(over?' (over by '+hrs(Math.abs(remainingMin))+'h)':'')+'</span>';
+        html += '<span class="sub" style="font-weight:600; color:'+barColor+';">'+(over?'0.0':hrs(remainingMin))+' hrs left</span></div>';
+        html += '<div class="bar-bg"><div class="bar-fill" style="width:'+pct+'%; background:'+barColor+';"></div></div>';
+      } else {
+        html += '<div class="sub" style="margin-top:10px;">'+hrs(usedMin)+' hrs logged (no package total set)</div>';
+      }
+
+      if (a.log.length>0) {
+        html += '<div style="margin-top:10px;">';
+        html += '<button class="btn" style="font-size:12px; padding:5px 10px;" data-action="toggleac" data-id="'+a.id+'">'+(logExpanded['ac_'+a.id]?'Hide log':'Show log ('+a.log.length+')')+'</button> ';
+        html += '<button class="btn btn-danger" style="font-size:12px; padding:5px 10px;" data-action="undoac" data-id="'+a.id+'">Undo last</button></div>';
+        if (logExpanded['ac_'+a.id]) {
+          html += '<div style="margin-top:6px;">';
+          a.log.forEach(e => html += '<div class="log-entry"><span>'+fmtDate(e.ts)+' · '+hrs(e.minutes)+'h'+(e.notes?' · '+esc(e.notes):'')+'</span><span style="display:flex; gap:4px;"><button class="btn" style="padding:2px 8px; font-size:12px;" data-action="editacentry" data-subject="'+a.id+'" data-entry="'+e.id+'">✎</button><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delacentry" data-subject="'+a.id+'" data-entry="'+e.id+'">✕</button></span></div>');
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+    });
+    return html;
+  }
+
+  function bindAcademicEvents(app) {
+    const addBtn = document.getElementById('add-academic-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'addAcademic'}; render(); };
+    app.querySelectorAll('[data-action="logac"]').forEach(b=>b.onclick=()=>{ modal = {type:'logAcademic', subjectId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="delac"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove this class and all logged time?')) deleteAcademicSubject(b.dataset.id); });
+    app.querySelectorAll('[data-action="toggleac"]').forEach(b=>b.onclick=()=>{ const k='ac_'+b.dataset.id; logExpanded[k]=!logExpanded[k]; render(); });
+    app.querySelectorAll('[data-action="undoac"]').forEach(b=>b.onclick=()=>{ if(confirm('Remove most recent entry?')) undoLastAcademic(b.dataset.id); });
+    app.querySelectorAll('[data-action="editacentry"]').forEach(b=>b.onclick=()=>{ modal = {type:'editAcademic', subjectId:b.dataset.subject, entryId:b.dataset.entry}; render(); });
+    app.querySelectorAll('[data-action="delacentry"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this logged time?')) deleteAcademicEntry(b.dataset.subject, b.dataset.entry); });
+  }
+
+  function renderMatches() {
+    const stats = matchStats();
+    let html = '<div class="metric-grid">';
+    html += '<div class="metric"><div class="label">Record</div><div class="value">'+stats.wins+'–'+stats.losses+'</div></div>';
+    html += '<div class="metric"><div class="label">Win rate</div><div class="value">'+(stats.winPct===null?'—':stats.winPct+'%')+'</div></div>';
+    html += '</div>';
+
+    html += '<div class="card" id="match-detail-toggle" style="margin-bottom:8px; cursor:pointer; padding:0.7rem 1.1rem;">';
+    html += '<div class="row"><span>Performance by opponent level</span><span class="sub" style="font-size:16px;">'+(matchDetailExpanded?'Hide ▴':'Details ▾')+'</span></div>';
+    html += '</div>';
+
+    if (matchDetailExpanded) {
+      html += '<div class="row" style="margin-bottom:10px;">';
+      html += '<span class="sub">My UTR: <strong style="color:#1a1a1a;">'+(myUTR!==null?myUTR.toFixed(2):'not set')+'</strong></span>';
+      html += '<button class="btn" id="set-utr-btn" style="font-size:12px; padding:5px 10px;">'+(myUTR!==null?'Update':'Set my UTR')+'</button>';
+      html += '</div>';
+
+      const bd = utrBreakdown();
+      if (bd) {
+        const rows = [
+          ['higher','vs higher UTR'],
+          ['similar','vs similar UTR (±0.25)'],
+          ['lower','vs lower UTR']
+        ];
+        html += '<div class="card" style="margin-bottom:12px;">';
+        html += '<span class="sub" style="text-transform:uppercase; letter-spacing:0.03em; font-weight:600;">Performance by opponent level</span>';
+        rows.forEach(([key,label]) => {
+          const b = bd.buckets[key];
+          const t = b.w+b.l;
+          const pct = t>0 ? Math.round((b.w/t)*100) : null;
+          html += '<div class="row" style="margin-top:8px;">';
+          html += '<span class="sub">'+label+'</span>';
+          html += '<span style="font-weight:600;">'+(t>0 ? b.w+'–'+b.l+' ('+pct+'%)' : '—')+'</span>';
+          html += '</div>';
+        });
+        if (bd.missing>0) html += '<div class="sub" style="margin-top:8px;">'+bd.missing+' match'+(bd.missing===1?'':'es')+' missing opponent UTR, excluded above.</div>';
+        html += '</div>';
+      } else {
+        html += '<div class="card" style="margin-bottom:12px;"><span class="sub">Set your UTR above to see win rate broken down by opponent level.</span></div>';
+      }
+    }
+
+    html += '<button class="btn btn-primary fab-add" id="add-match-btn">+ Log match</button>';
+
+    if (matches.length === 0) { html += '<div class="empty">No matches logged yet.</div>'; return html; }
+
+    html += '<div class="card">';
+    matches.forEach(m => {
+      const badge = m.result==='W' ? 'pill-win' : 'pill-loss';
+      const resultLabel = m.result==='W' ? 'Win' : 'Loss';
+      html += '<div class="log-entry" style="flex-direction:column; align-items:stretch; gap:4px;">';
+      html += '<div class="row" style="gap:8px;">';
+      html += '<span><span class="type-pill '+badge+'">'+resultLabel+'</span> vs '+esc(m.opponent)+(m.opponentUTR?' (UTR '+esc(String(m.opponentUTR))+')':'')+'</span>';
+      html += '<span style="display:flex; gap:4px;"><button class="btn" style="padding:2px 8px; font-size:12px;" data-action="editmatch" data-id="'+m.id+'">✎</button><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delmatch" data-id="'+m.id+'">✕</button></span>';
+      html += '</div>';
+      html += '<span class="sub">'+fmtDateOnly(m.ts)+(m.tournament?' · '+esc(m.tournament):'')+(m.score?' · '+esc(m.score):'')+(m.notes?' · '+esc(m.notes):'')+'</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function bindMatchEvents(app) {
+    const addBtn = document.getElementById('add-match-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'addMatch'}; render(); };
+    const detailToggle = document.getElementById('match-detail-toggle');
+    if (detailToggle) detailToggle.onclick = () => { matchDetailExpanded = !matchDetailExpanded; localStorage.setItem('mav_match_detail_v1', matchDetailExpanded ? '1' : '0'); render(); };
+    const utrBtn = document.getElementById('set-utr-btn');
+    if (utrBtn) utrBtn.onclick = () => { modal = {type:'editMyUTR'}; render(); };
+    app.querySelectorAll('[data-action="editmatch"]').forEach(b=>b.onclick=()=>{ modal = {type:'editMatch', entryId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="delmatch"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this match?')) deleteMatch(b.dataset.id); });
+  }
+
+  function renderWellness() {
+    const weekStart = startOfWeek();
+    const wstats = wellnessStatsForWeek(weekStart);
+    let html = '<div class="metric-grid">';
+    html += '<div class="metric"><div class="label">Rest days this week</div><div class="value">'+wstats.restDays+'</div></div>';
+    html += '<div class="metric"><div class="label">Avg soreness</div><div class="value">'+(wstats.avgSoreness!==null?wstats.avgSoreness.toFixed(1)+'/5':'—')+'</div></div>';
+    html += '</div>';
+
+    html += '<button class="btn btn-primary fab-add" id="add-wellness-btn">+ Daily check-in</button>';
+
+    if (wellness.length === 0) { html += '<div class="empty">No check-ins logged yet.</div>'; return html; }
+
+    html += '<div class="card">';
+    wellness.forEach(w => {
+      const d = new Date(w.date+'T12:00:00');
+      const label = d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+      html += '<div class="log-entry"><span>';
+      if (w.restDay) html += '<span class="type-pill">Rest day</span> '+label;
+      else html += label+' · Soreness '+(w.soreness!==null&&w.soreness!==undefined?w.soreness+'/5':'—');
+      if (w.notes) html += ' · '+esc(w.notes);
+      html += '</span>';
+      html += '<span style="display:flex; gap:4px;"><button class="btn" style="padding:2px 8px; font-size:12px;" data-action="editwellness" data-id="'+w.id+'">✎</button><button class="btn btn-danger" style="padding:2px 8px; font-size:12px;" data-action="delwellness" data-id="'+w.id+'">✕</button></span></div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function bindWellnessEvents(app) {
+    const addBtn = document.getElementById('add-wellness-btn');
+    if (addBtn) addBtn.onclick = () => { modal = {type:'logWellness'}; render(); };
+    app.querySelectorAll('[data-action="editwellness"]').forEach(b=>b.onclick=()=>{ modal = {type:'logWellness', entryId:b.dataset.id}; render(); });
+    app.querySelectorAll('[data-action="delwellness"]').forEach(b=>b.onclick=()=>{ if(confirm('Delete this check-in?')) deleteWellness(b.dataset.id); });
+  }
+
+  function renderModal() {
+    const old = document.getElementById('modal-root');
+    if (old) old.remove();
+    if (!modal) return;
+    const div = document.createElement('div');
+    div.id = 'modal-root';
+
+    if (modal.type === 'logCoach') {
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0,10);
+      const timeStr = now.toTimeString().slice(0,5);
+      const coach = coaches.find(c=>c.id===modal.coachId);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Log session — '+esc(coach ? coach.name : '')+'</div>' +
+        '<div class="field"><label>Date</label><input id="m-lsdate" type="date" value="'+todayStr+'" /></div>' +
+        '<div class="field"><label>Time</label><input id="m-lstime" type="time" value="'+timeStr+'" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Log</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const date = document.getElementById('m-lsdate').value;
+        const time = document.getElementById('m-lstime').value || '00:00';
+        if (!date) { document.getElementById('m-lsdate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T'+time+':00').toISOString();
+        logSession(modal.coachId, iso); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'editCoachEntry') {
+      const coach = coaches.find(c=>c.id===modal.coachId);
+      const pkg = coach ? coach.packages.find(p=>p.id===modal.packageId) : null;
+      const entry = pkg ? pkg.log.find(e=>e.id===modal.entryId) : null;
+      const d = entry ? new Date(entry.ts) : new Date();
+      const dateStr = d.toISOString().slice(0,10);
+      const timeStr = d.toTimeString().slice(0,5);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Edit session — '+esc(coach ? coach.name : '')+'</div>' +
+        '<div class="field"><label>Date</label><input id="m-esdate" type="date" value="'+dateStr+'" /></div>' +
+        '<div class="field"><label>Time</label><input id="m-estime" type="time" value="'+timeStr+'" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Save</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const date = document.getElementById('m-esdate').value;
+        const time = document.getElementById('m-estime').value || '00:00';
+        if (!date) { document.getElementById('m-esdate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T'+time+':00').toISOString();
+        updateCoachEntry(modal.coachId, modal.packageId, modal.entryId, iso); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'renewCoach') {
+      const coach = coaches.find(c=>c.id===modal.coachId);
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0,10);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Renew — '+esc(coach ? coach.name : '')+'</div>' +
+        '<div class="sub" style="margin-bottom:8px;">Current package: '+(coach?currentPackage(coach).totalSessions:0)+' sessions</div>' +
+        '<div class="field"><label>Sessions to add</label><input id="m-renew" type="number" min="1" placeholder="e.g. 10" /></div>' +
+        '<div class="field"><label>Renewal date</label><input id="m-renewdate" type="date" value="'+todayStr+'" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Renew</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const add = parseInt(document.getElementById('m-renew').value,10);
+        const date = document.getElementById('m-renewdate').value;
+        if (!add || add<=0) { document.getElementById('m-renew').style.borderColor='var(--red)'; return; }
+        const iso = new Date((date||todayStr)+'T12:00:00').toISOString();
+        renewCoach(modal.coachId, add, iso); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'addCoach') {
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Add coach</div>' +
+        '<div class="field"><label>Coach name</label><input id="m-name" placeholder="e.g. Coach Ramirez" /></div>' +
+        '<div class="field"><label>Role</label><select id="m-type">' +
+          '<option>Primary tennis coach</option><option>Hitting coach</option><option>Fitness coach</option><option>Mental coach</option><option>Other</option>' +
+        '</select></div>' +
+        '<div class="field"><label>Sessions in prepaid package (optional)</label><input id="m-total" type="number" min="0" placeholder="e.g. 10" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Add coach</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const name = document.getElementById('m-name').value.trim();
+        const type = document.getElementById('m-type').value;
+        const total = parseInt(document.getElementById('m-total').value,10) || 0;
+        if (!name) { document.getElementById('m-name').style.borderColor = 'var(--red)'; return; }
+        addCoach(name, type, total); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'addCourt') {
+      const now = new Date();
+      const today = now.toISOString().slice(0,10);
+      const nowTime = now.toTimeString().slice(0,5);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Log court time</div>' +
+        '<div class="field"><label>Type</label><select id="m-ctype">' +
+          COURT_TYPES.map(t=>'<option>'+t+'</option>').join('') +
+        '</select></div>' +
+        '<div class="field"><label>Date</label><input id="m-cdate" type="date" value="'+today+'" /></div>' +
+        '<div class="field"><label>Start time</label><input id="m-ctime" type="time" value="'+nowTime+'" /></div>' +
+        '<div class="field"><label>Duration (minutes)</label><input id="m-cmin" type="number" min="5" step="5" placeholder="e.g. 90" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-cnotes" placeholder="e.g. serve + return focus" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Log</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const type = document.getElementById('m-ctype').value;
+        const date = document.getElementById('m-cdate').value;
+        const time = document.getElementById('m-ctime').value || '12:00';
+        const minutes = parseInt(document.getElementById('m-cmin').value,10);
+        const notes = document.getElementById('m-cnotes').value.trim();
+        if (!minutes || minutes<=0) { document.getElementById('m-cmin').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-cdate').style.borderColor='var(--red)'; return; }
+        addCourtEntry(type, minutes, date, time, notes); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'editCourt') {
+      const entry = courtLog.find(e=>e.id===modal.entryId);
+      const d = entry ? new Date(entry.ts) : new Date();
+      const dateStr = d.toISOString().slice(0,10);
+      const timeStr = d.toTimeString().slice(0,5);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Edit court time</div>' +
+        '<div class="field"><label>Type</label><select id="m-ectype">' +
+          COURT_TYPES.map(t=>'<option'+(entry&&entry.type===t?' selected':'')+'>'+t+'</option>').join('') +
+        '</select></div>' +
+        '<div class="field"><label>Date</label><input id="m-ecdate" type="date" value="'+dateStr+'" /></div>' +
+        '<div class="field"><label>Start time</label><input id="m-ectime" type="time" value="'+timeStr+'" /></div>' +
+        '<div class="field"><label>Duration (minutes)</label><input id="m-ecmin" type="number" min="5" step="5" value="'+(entry?entry.minutes:'')+'" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-ecnotes" value="'+esc(entry?entry.notes:'')+'" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Save</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const type = document.getElementById('m-ectype').value;
+        const date = document.getElementById('m-ecdate').value;
+        const time = document.getElementById('m-ectime').value || '12:00';
+        const minutes = parseInt(document.getElementById('m-ecmin').value,10);
+        const notes = document.getElementById('m-ecnotes').value.trim();
+        if (!minutes || minutes<=0) { document.getElementById('m-ecmin').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-ecdate').style.borderColor='var(--red)'; return; }
+        updateCourtEntry(modal.entryId, type, minutes, date, time, notes); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'addAcademic') {
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Add academic class</div>' +
+        '<div class="field"><label>Subject</label><input id="m-subject" placeholder="e.g. Algebra II" /></div>' +
+        '<div class="field"><label>Tutor (optional)</label><input id="m-tutor" placeholder="e.g. Ms. Alvarez" /></div>' +
+        '<div class="field"><label>Hours in prepaid package (optional)</label><input id="m-atotal" type="number" min="0" step="0.5" placeholder="e.g. 20" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Add class</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const subject = document.getElementById('m-subject').value.trim();
+        const tutor = document.getElementById('m-tutor').value.trim();
+        const totalHours = parseFloat(document.getElementById('m-atotal').value) || 0;
+        if (!subject) { document.getElementById('m-subject').style.borderColor = 'var(--red)'; return; }
+        addAcademicSubject(subject, tutor, totalHours); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'logAcademic') {
+      const now = new Date();
+      const today = now.toISOString().slice(0,10);
+      const nowTime = now.toTimeString().slice(0,5);
+      const subj = academic.find(a=>a.id===modal.subjectId);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Log time — '+esc(subj ? subj.subject : '')+'</div>' +
+        '<div class="field"><label>Date</label><input id="m-adate" type="date" value="'+today+'" /></div>' +
+        '<div class="field"><label>Start time</label><input id="m-atime" type="time" value="'+nowTime+'" /></div>' +
+        '<div class="field"><label>Duration (minutes)</label><input id="m-amin" type="number" min="5" step="5" placeholder="e.g. 60" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-anotes" placeholder="e.g. quadratics review" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Log</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const date = document.getElementById('m-adate').value;
+        const time = document.getElementById('m-atime').value || '12:00';
+        const minutes = parseInt(document.getElementById('m-amin').value,10);
+        const notes = document.getElementById('m-anotes').value.trim();
+        if (!minutes || minutes<=0) { document.getElementById('m-amin').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-adate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T'+time+':00').toISOString();
+        logAcademicTime(modal.subjectId, iso, minutes, notes); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'editAcademic') {
+      const subj = academic.find(a=>a.id===modal.subjectId);
+      const entry = subj ? subj.log.find(e=>e.id===modal.entryId) : null;
+      const d = entry ? new Date(entry.ts) : new Date();
+      const dateStr = d.toISOString().slice(0,10);
+      const timeStr = d.toTimeString().slice(0,5);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Edit time — '+esc(subj ? subj.subject : '')+'</div>' +
+        '<div class="field"><label>Date</label><input id="m-eadate" type="date" value="'+dateStr+'" /></div>' +
+        '<div class="field"><label>Start time</label><input id="m-eatime" type="time" value="'+timeStr+'" /></div>' +
+        '<div class="field"><label>Duration (minutes)</label><input id="m-eamin" type="number" min="5" step="5" value="'+(entry?entry.minutes:'')+'" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-eanotes" value="'+esc(entry?entry.notes:'')+'" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Save</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const date = document.getElementById('m-eadate').value;
+        const time = document.getElementById('m-eatime').value || '12:00';
+        const minutes = parseInt(document.getElementById('m-eamin').value,10);
+        const notes = document.getElementById('m-eanotes').value.trim();
+        if (!minutes || minutes<=0) { document.getElementById('m-eamin').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-eadate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T'+time+':00').toISOString();
+        updateAcademicEntry(modal.subjectId, modal.entryId, iso, minutes, notes); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'addMatch') {
+      const today = new Date().toISOString().slice(0,10);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Log match</div>' +
+        '<div class="field"><label>Opponent name</label><input id="m-opp" placeholder="e.g. J. Smith" /></div>' +
+        '<div class="field"><label>Opponent UTR (optional)</label><input id="m-utr" type="number" step="0.01" min="0" max="16" placeholder="e.g. 7.85" /></div>' +
+        '<div class="field"><label>Result</label><select id="m-result"><option value="W">Win</option><option value="L">Loss</option></select></div>' +
+        '<div class="field"><label>Score</label><input id="m-score" placeholder="e.g. 6-3, 4-6, 10-8" /></div>' +
+        '<div class="field"><label>Tournament / event (optional)</label><input id="m-tourn" placeholder="e.g. NorCal L5" /></div>' +
+        '<div class="field"><label>Date</label><input id="m-mdate" type="date" value="'+today+'" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-mnotes" placeholder="e.g. slow start, strong 3rd set" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Log</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const opponent = document.getElementById('m-opp').value.trim();
+        const utrVal = document.getElementById('m-utr').value;
+        const opponentUTR = utrVal ? parseFloat(utrVal) : null;
+        const result = document.getElementById('m-result').value;
+        const score = document.getElementById('m-score').value.trim();
+        const tournament = document.getElementById('m-tourn').value.trim();
+        const date = document.getElementById('m-mdate').value;
+        const notes = document.getElementById('m-mnotes').value.trim();
+        if (!opponent) { document.getElementById('m-opp').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-mdate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T12:00:00').toISOString();
+        addMatch(opponent, opponentUTR, result, score, tournament, iso, notes); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'editMyUTR') {
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">My UTR</div>' +
+        '<div class="field"><label>Current UTR</label><input id="m-myutr" type="number" step="0.01" min="0" max="16" value="'+(myUTR!==null?myUTR:'')+'" placeholder="e.g. 7.85" /></div>' +
+        '<div class="sub">Used to compare match results against opponent level.</div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Save</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const val = document.getElementById('m-myutr').value;
+        myUTR = val ? parseFloat(val) : null;
+        saveMyUTR(); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'logWellness') {
+      const existing = modal.entryId ? wellness.find(w=>w.id===modal.entryId) : null;
+      const today = new Date().toISOString().slice(0,10);
+      const dateVal = existing ? existing.date : today;
+      const restChecked = existing ? existing.restDay : false;
+      const sorenessVal = existing && existing.soreness!==null && existing.soreness!==undefined ? existing.soreness : 3;
+      const notesVal = existing ? existing.notes : '';
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">'+(existing?'Edit check-in':'Daily check-in')+'</div>' +
+        '<div class="field"><label>Date</label><input id="m-wdate" type="date" value="'+dateVal+'" /></div>' +
+        '<div class="field" style="flex-direction:row; align-items:center; gap:8px;"><input id="m-wrest" type="checkbox" style="width:auto; height:auto;" '+(restChecked?'checked':'')+' /><label style="text-transform:none; font-size:14px;">Rest day</label></div>' +
+        '<div class="field" id="m-wsoreness-field"><label>Soreness (1 = none, 5 = very sore)</label><select id="m-wsoreness">' +
+          [1,2,3,4,5].map(n=>'<option value="'+n+'"'+(n===sorenessVal?' selected':'')+'>'+n+'</option>').join('') +
+        '</select></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-wnotes" value="'+esc(notesVal)+'" placeholder="e.g. tight hamstring" /></div>' +
+        '<div class="row" style="margin-top:8px;">' +
+          (existing ? '<button class="btn btn-danger" id="m-delete">Delete</button>' : '<button class="btn" id="m-cancel">Cancel</button>') +
+          '<button class="btn btn-primary" id="m-save">Save</button>' +
+        '</div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      const restCb = document.getElementById('m-wrest');
+      const sorenessField = document.getElementById('m-wsoreness-field');
+      const syncSorenessVisibility = () => { sorenessField.style.display = restCb.checked ? 'none' : 'flex'; };
+      restCb.onchange = syncSorenessVisibility;
+      syncSorenessVisibility();
+      const cancelBtn = document.getElementById('m-cancel');
+      if (cancelBtn) cancelBtn.onclick = () => { modal=null; render(); };
+      const deleteBtn = document.getElementById('m-delete');
+      if (deleteBtn) deleteBtn.onclick = () => { if(confirm('Delete this check-in?')) deleteWellness(modal.entryId); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const date = document.getElementById('m-wdate').value;
+        const restDay = document.getElementById('m-wrest').checked;
+        const soreness = parseInt(document.getElementById('m-wsoreness').value,10);
+        const notes = document.getElementById('m-wnotes').value.trim();
+        if (!date) { document.getElementById('m-wdate').style.borderColor='var(--red)'; return; }
+        upsertWellness(date, restDay, soreness, notes, modal.entryId); modal=null; render();
+      };
+    }
+
+    if (modal.type === 'editMatch') {
+      const m = matches.find(m=>m.id===modal.entryId);
+      const d = m ? new Date(m.ts) : new Date();
+      const dateStr = d.toISOString().slice(0,10);
+      div.innerHTML =
+        '<div class="modal-bg" id="modal-bg"><div class="modal">' +
+        '<div class="modal-title">Edit match</div>' +
+        '<div class="field"><label>Opponent name</label><input id="m-eopp" value="'+esc(m?m.opponent:'')+'" /></div>' +
+        '<div class="field"><label>Opponent UTR (optional)</label><input id="m-eutr" type="number" step="0.01" min="0" max="16" value="'+(m&&m.opponentUTR?m.opponentUTR:'')+'" /></div>' +
+        '<div class="field"><label>Result</label><select id="m-eresult"><option value="W"'+(m&&m.result==='W'?' selected':'')+'>Win</option><option value="L"'+(m&&m.result==='L'?' selected':'')+'>Loss</option></select></div>' +
+        '<div class="field"><label>Score</label><input id="m-escore" value="'+esc(m?m.score:'')+'" /></div>' +
+        '<div class="field"><label>Tournament / event (optional)</label><input id="m-etourn" value="'+esc(m?m.tournament:'')+'" /></div>' +
+        '<div class="field"><label>Date</label><input id="m-emdate" type="date" value="'+dateStr+'" /></div>' +
+        '<div class="field"><label>Notes (optional)</label><input id="m-emnotes" value="'+esc(m?m.notes:'')+'" /></div>' +
+        '<div class="row" style="margin-top:8px;"><button class="btn" id="m-cancel">Cancel</button><button class="btn btn-primary" id="m-save">Save</button></div>' +
+        '</div></div>';
+      document.getElementById('app').appendChild(div);
+      document.getElementById('m-cancel').onclick = () => { modal=null; render(); };
+      document.getElementById('modal-bg').onclick = (e)=>{ if(e.target.id==='modal-bg'){ modal=null; render(); } };
+      document.getElementById('m-save').onclick = () => {
+        const opponent = document.getElementById('m-eopp').value.trim();
+        const utrVal = document.getElementById('m-eutr').value;
+        const opponentUTR = utrVal ? parseFloat(utrVal) : null;
+        const result = document.getElementById('m-eresult').value;
+        const score = document.getElementById('m-escore').value.trim();
+        const tournament = document.getElementById('m-etourn').value.trim();
+        const date = document.getElementById('m-emdate').value;
+        const notes = document.getElementById('m-emnotes').value.trim();
+        if (!opponent) { document.getElementById('m-eopp').style.borderColor='var(--red)'; return; }
+        if (!date) { document.getElementById('m-emdate').style.borderColor='var(--red)'; return; }
+        const iso = new Date(date+'T12:00:00').toISOString();
+        updateMatch(modal.entryId, opponent, opponentUTR, result, score, tournament, iso, notes); modal=null; render();
+      };
+    }
+  }
+
+  load();
+  render();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(()=>{});
+    });
+  }
+})();
+</script>
+</body>
+</html>
